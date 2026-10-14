@@ -82,6 +82,7 @@ export class PluginSettingTab {
 
 export class Setting {
   constructor(public readonly containerEl: any) {}
+  setHeading(): this { return this; }
   setName(): this { return this; }
   setDesc(): this { return this; }
   addText(callback: (component: ChainableComponent) => unknown): this { callback(new ChainableComponent()); return this; }
@@ -116,6 +117,7 @@ export async function requestUrl(): Promise<never> {
 }
 
 export class ItemView {
+  registerEvent(_event: unknown): void {}
   readonly contentEl = Object.assign(document.createElement("div"), {
     addClass(this: HTMLElement, ...names: string[]) { this.classList.add(...names); },
     empty(this: HTMLElement) { this.replaceChildren(); }

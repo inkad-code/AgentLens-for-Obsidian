@@ -13,6 +13,8 @@ const context = await esbuild.context({
     "node:*",
     "obsidian",
     "electron",
+    "@electron/remote",
+    "assert", "buffer", "events", "http", "https", "net", "tls", "url", "util", "stream", "dns",
     "@codemirror/autocomplete",
     "@codemirror/collab",
     "@codemirror/commands",
@@ -26,6 +28,7 @@ const context = await esbuild.context({
     "@lezer/lr"
   ],
   format: "cjs",
+  supported: { "dynamic-import": false },
   target: "es2018",
   loader: {
     ".png": "dataurl",

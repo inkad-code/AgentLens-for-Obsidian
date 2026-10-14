@@ -62,7 +62,7 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
       templateId?: "default" | "compact" | undefined;
     }) => VaultWriter) | undefined,
     private readonly requests: RequestCoordinator = new RequestCoordinator()
-  ) {
+) {
     this.durableActions = new DurableActionStore(stateStore, createId);
     this.scheduler = new SchedulerCoordinator(auth, api, this.durableActions, requests, createId, {
       requireSupportedVersion: (accessToken) => this.requireSupportedVersion(accessToken),
@@ -78,7 +78,7 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
         savedContentKeys.length,
         new Date().toISOString(),
         savedContentKeys
-      )
+)
     });
   }
 
@@ -216,7 +216,7 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
       remoteScope("creator-parse", profileUrl),
       "creator-parse",
       ({ idempotencyKey }) => this.api.parseCreator(token, profileUrl, idempotencyKey)
-    );
+);
   }
 
   async followCreator(input: FollowCreatorInput): Promise<CreatorRecord> {
@@ -227,7 +227,7 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
       remoteScope("creator-create", JSON.stringify(input)),
       "creator-create",
       ({ idempotencyKey }) => this.api.createCreator(token, input, idempotencyKey)
-    );
+);
   }
 
   async setCreatorEnabled(creatorId: string, enabled: boolean): Promise<CreatorRecord> {
@@ -238,13 +238,13 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
       remoteScope("creator-toggle", `${creatorId}:${enabled}`),
       "creator-toggle",
       ({ idempotencyKey }) => this.api.updateCreator(token, creatorId, enabled, idempotencyKey)
-    );
+);
   }
 
   async previewCreatorSettings(
     creatorId: string,
     input: CreatorSettingsInput
-  ): Promise<CreatorSchedulePreview> {
+): Promise<CreatorSchedulePreview> {
     requireFullRelease();
     const token = await this.requireAccessToken();
     await this.requireSupportedVersion(token);
@@ -255,7 +255,7 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
     creatorId: string,
     input: CreatorSettingsInput,
     previewToken: string
-  ): Promise<CreatorRecord> {
+): Promise<CreatorRecord> {
     requireFullRelease();
     const token = await this.requireAccessToken();
     await this.requireSupportedVersion(token);
@@ -263,7 +263,7 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
       remoteScope("creator-settings", `${creatorId}:${previewToken}:${JSON.stringify(input)}`),
       "creator-settings",
       ({ idempotencyKey }) => this.api.updateCreatorSettings(token, creatorId, input, previewToken, idempotencyKey)
-    );
+);
   }
 
   async deleteCreator(creatorId: string): Promise<void> {
@@ -274,7 +274,7 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
       remoteScope("creator-delete", creatorId),
       "creator-delete",
       ({ idempotencyKey }) => this.api.deleteCreator(token, creatorId, idempotencyKey)
-    );
+);
   }
 
   retryCreator(creator: CreatorRecord): Promise<SchedulerRunResult> {
@@ -311,8 +311,8 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
         { url, mode: "single_post" },
         idempotencyKey,
         requestId
-      )
-    );
+)
+);
     const post = result.content[0];
     if (!post) throw new Error("AgentLens returned no content for this URL.");
     return {
@@ -329,7 +329,7 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
     return this.requests.runExclusive(
       `profile-fetch:${url}:${cursor ?? "first"}`,
       () => this.fetchProfilePageOnce(url, cursor)
-    );
+);
   }
 
   private async fetchProfilePageOnce(url: string, cursor: string | null): Promise<FetchPage> {
@@ -349,17 +349,17 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
         { url, mode: "profile_page", ...(cursor ? { cursor } : {}) },
         idempotencyKey,
         requestId
-      ),
+),
       // The server binds a continuation to its first consumer key, even when
       // that page fails validation. Retrying must retain that same identity.
       { retainIdentityOnFailure: Boolean(cursor) }
-    );
+);
   }
 
   async plan(
     post: NormalizedPost,
     options: WriteOptions & { fetchId?: string | undefined; fetchedAt?: string | undefined } = {}
-  ): Promise<NoteWriteManifest> {
+): Promise<NoteWriteManifest> {
     const writer = this.createVaultWriter && (options.folderPath || options.mediaPolicy || options.templateId)
       ? this.createVaultWriter(options)
       : this.vaultWriter;
@@ -377,7 +377,7 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
   planPreview(
     preview: PreviewResult,
     options: WriteOptions = {}
-  ): Promise<NoteWriteManifest> {
+): Promise<NoteWriteManifest> {
     return this.plan(preview.post, {
       ...options,
       fetchId: preview.fetchId ?? (preview.demo ? "demo" : undefined)
@@ -406,7 +406,7 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
       manifestOptions(manifest),
       callback?.request,
       callback?.idempotencyKey
-    );
+);
     let write: VaultWriteResult;
     try {
       write = await this.writeLocal(preview, manifest, signal);
@@ -436,7 +436,7 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
   async saveMany(
     previews: readonly PreviewResult[],
     options: WriteOptions = {}
-  ): Promise<BatchSaveResult> {
+): Promise<BatchSaveResult> {
     const successes: SaveResult[] = [];
     const failures: Array<{ preview: PreviewResult; error: string }> = [];
     for (const preview of previews) {
@@ -455,8 +455,8 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
 
   async savePrepared(
     prepared: readonly PreparedSave[],
-    onProgress?: ((contentKey: string, status: string) => void) | undefined
-  ): Promise<BatchSaveResult> {
+    onProgress?: ((contentKey: string, status: string) => void)
+): Promise<BatchSaveResult> {
     const controller = new AbortController();
     this.manualSaves.add(controller);
     try {
@@ -559,18 +559,18 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
     preview: PreviewResult,
     manifest: NoteWriteManifest,
     signal?: AbortSignal
-  ): Promise<VaultWriteResult> {
+): Promise<VaultWriteResult> {
     return this.requests.runExclusive(
       `vault-write:${manifest.contentKey}`,
       () => this.writeLocalOnce(preview, manifest, signal)
-    );
+);
   }
 
   private async writeLocalOnce(
     preview: PreviewResult,
     manifest: NoteWriteManifest,
     signal?: AbortSignal
-  ): Promise<VaultWriteResult> {
+): Promise<VaultWriteResult> {
     const media = new Map(preview.post.media.map((item) => [item.id, item]));
     const prior = (await this.stateStore.load()).ledger[manifest.contentKey];
     const baseWrite = await this.vaultWriter.execute(
@@ -594,7 +594,7 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
                 preview.post.contentId,
                 [mediaId],
                 `media-refresh-${contentKey(preview.post)}-${mediaId}`
-              );
+);
               const replacement = refreshed.find((candidate) => candidate.id === mediaId);
               if (!replacement) throw initialError;
               return this.mediaDownloader!.download(replacement, signal);
@@ -607,7 +607,7 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
         monitoringInstanceId: preview.monitoringInstanceId,
         firstWrittenAt: prior?.firstWrittenAt ?? prior?.writtenAt
       }
-    );
+);
     const write: VaultWriteResult = {
       ...baseWrite,
       ledger: {
@@ -632,7 +632,7 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
     if (compareVersions(this.api.currentClientVersion(), capabilities.minimumPluginVersion) < 0) {
       throw new Error(
         `AgentLens ${capabilities.minimumPluginVersion} or newer is required. Update in Obsidian Community Plugins before using live actions.`
-      );
+);
     }
     return capabilities;
   }
@@ -657,10 +657,10 @@ function manifestOptions(manifest: NoteWriteManifest): {
 
 function withTimeout<T>(operation: Promise<T>, milliseconds: number): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Result confirmation timed out.")), milliseconds);
+    const timer = window.setTimeout(() => reject(new Error("Result confirmation timed out.")), milliseconds);
     operation.then(
-      value => { clearTimeout(timer); resolve(value); },
-      error => { clearTimeout(timer); reject(error); }
-    );
+      value => { window.clearTimeout(timer); resolve(value); },
+      error => { window.clearTimeout(timer); reject(error instanceof Error ? error : new Error("Result confirmation failed.")); }
+);
   });
 }

@@ -34,7 +34,7 @@ export class ObsidianVaultPort implements VaultPort {
   }
 
   async updateFrontmatter(file: VaultFileRef, values: Readonly<Record<string, unknown>>): Promise<void> {
-    await this.app.fileManager.processFrontMatter(this.requireFile(file), (frontmatter) => {
+    await this.app.fileManager.processFrontMatter(this.requireFile(file), (frontmatter: Record<string, unknown>) => {
       // Source_url and Platform identify marker-free notes; legacy identity
       // properties can be removed after a write has supplied both fields.
       for (const key of ["agentlens_key", "agentlens_content_id", "agentlens_fetch_id", "agentlens_effective_post_key", "agentlens_client", "canonical_url", "creator_handle", "has_transcript", "agentlens_template"]) delete frontmatter[key];
@@ -55,7 +55,7 @@ export class ObsidianVaultPort implements VaultPort {
     for (let attempt = 0; attempt < 100; attempt++) {
       const registered = this.getFile(normalized);
       if (registered) return registered;
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await new Promise(resolve => window.setTimeout(resolve, 50));
     }
     throw new Error("Attachment was written but Vault registration is pending. Check the file before retrying.");
   }

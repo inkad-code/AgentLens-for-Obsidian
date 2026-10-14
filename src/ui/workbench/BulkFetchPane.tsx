@@ -1,3 +1,4 @@
+import type { SyntheticEvent } from "react";
 import { NoteProperties } from "./NoteProperties";
 import { renderNotePreview } from "../../vault/VaultWriter";
 import type { CSSProperties } from "react";
@@ -127,11 +128,11 @@ export function BulkFetchPane({
     ] as const)).then(
       (entries) => { if (!cancelled) setRowPlans(Object.fromEntries(entries)); },
       (caught) => { if (!cancelled) setError(message(caught)); }
-    );
+);
     return () => { cancelled = true; };
   }, [service, revision, folderPath, mediaPolicy, templateId]);
 
-  async function loadFirst(event: React.FormEvent) {
+  async function loadFirst(event: SyntheticEvent) {
     event.preventDefault();
     if (!service || (signedIn && !profileUrl.trim())) return;
     const requestRevision = bulkSourceRevision.current + 1;
@@ -405,7 +406,7 @@ export function BulkFetchPane({
                       <div className="agentlens-bulk-post-copy"><strong>{postListTitle(preview.post)}</strong><p>{preview.post.text}</p><div><time dateTime={preview.post.publishedAt}>{preview.post.publishedAt ? relativePublished(preview.post.publishedAt) : 'Date unavailable'}</time><span><img src={bulkAssets.imgImage} alt="Images" />{counts.images}</span><span><img src={bulkAssets.imgVideo} alt="Videos" />{counts.videos}</span>{counts.audio>0 && <span>{counts.audio} audio</span>}</div></div>
                       <button type="button" aria-label={`Preview ${postListTitle(preview.post)}`} onClick={() => {setActiveKey(key);setMobileDetailOpen(true);if(preview.post.platform === "wechat_official_account") void fetchArticleDetails(key);}}>Preview</button>
                     </div>
-                  );
+);
                 })}
                 </div>
                 <div className="agentlens-fetch-more"><button type="button" onClick={() => void loadMore()} disabled={busy || !session.current.cursor()} aria-label={failedCursor === session.current.cursor() && failedCursor ? "Retry failed page" : (signedIn ? "Fetch more · estimated 1 credit" : "Fetch more")}>{loadingMore ? "Fetching More…" : failedCursor === session.current.cursor() && failedCursor ? "Retry failed page" : "Fetch more"}</button></div>
@@ -418,12 +419,12 @@ export function BulkFetchPane({
                 </section>
               </WorkbenchDialog>}
             </div>
-      ) : signedIn ? (
+) : signedIn ? (
         <section className="agentlens-preview-card is-empty"><div className="agentlens-empty-proof" aria-hidden="true" /><h3>Paste a link to begin</h3><p>AgentLens parses the source first. Nothing is written<br />to your Vault until you confirm the save settings.</p></section>
-      ) : <WorkflowOnboarding variant="bulk" onRequestSignUp={onRequestSignUp} />}
+) : <WorkflowOnboarding variant="bulk" onRequestSignUp={onRequestSignUp} />}
       <BackToTop />
     </div>
-  );
+);
 }
 
 function relativePublished(value: string): string {

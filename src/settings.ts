@@ -32,7 +32,7 @@ export const DEFAULT_SETTINGS: AgentLensSettings = {
 };
 
 type AgentLensSettingsHost = Plugin & {
-  settings: AgentLensSettings;
+  agentlensSettings: AgentLensSettings;
   saveSettings(): Promise<void>;
   openWorkbench(tab: "single" | "bulk" | "auto"): void;
   copyDiagnostics(): Promise<void>;
@@ -91,7 +91,7 @@ export class AgentLensSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "AgentLens" });
+    new Setting(containerEl).setName("AgentLens").setHeading();
 
     new Setting(containerEl)
       .setName("Plugin version")
@@ -104,9 +104,9 @@ export class AgentLensSettingTab extends PluginSettingTab {
         .addOption("en", "English")
         .addOption("zh-CN", "简体中文")
         .addOption("zh-TW", "繁體中文")
-        .setValue(this.plugin.settings.locale)
+        .setValue(this.plugin.agentlensSettings.locale)
         .onChange(async (value) => {
-          this.plugin.settings.locale = resolveLocale(value);
+          this.plugin.agentlensSettings.locale = resolveLocale(value);
           await this.plugin.saveSettings();
         }));
 
@@ -115,9 +115,9 @@ export class AgentLensSettingTab extends PluginSettingTab {
       .setDesc("Vault-relative folder used for new saves. Each save can override it.")
       .addText((text) => text
         .setPlaceholder("AgentLens/Inbox")
-        .setValue(this.plugin.settings.defaultFolderPath)
+        .setValue(this.plugin.agentlensSettings.defaultFolderPath)
         .onChange(async (value) => {
-          this.plugin.settings.defaultFolderPath = safeFolderPath(value);
+          this.plugin.agentlensSettings.defaultFolderPath = safeFolderPath(value);
           await this.plugin.saveSettings();
         }));
 
@@ -128,44 +128,44 @@ export class AgentLensSettingTab extends PluginSettingTab {
         .addOption("download_all", "Download available media")
         .addOption("download_images_only", "Download images only")
         .addOption("link_only", "Keep links only")
-        .setValue(this.plugin.settings.defaultMediaPolicy)
+        .setValue(this.plugin.agentlensSettings.defaultMediaPolicy)
         .onChange(async (value) => {
-          this.plugin.settings.defaultMediaPolicy = value as AgentLensSettings["defaultMediaPolicy"];
+          this.plugin.agentlensSettings.defaultMediaPolicy = value as AgentLensSettings["defaultMediaPolicy"];
           await this.plugin.saveSettings();
         }));
 
     new Setting(containerEl)
       .setName("Default note template")
-      .setDesc("Default template saves source properties, content, tags, media and an editable Note section.")
+      .setDesc("Default template saves source properties, content, tags, media and an editable note section.")
       .addDropdown((dropdown) => dropdown
         .addOption("default", "Default template")
-        .setValue(this.plugin.settings.defaultTemplateId)
+        .setValue(this.plugin.agentlensSettings.defaultTemplateId)
         .onChange(async (value) => {
-          this.plugin.settings.defaultTemplateId = value as AgentLensSettings["defaultTemplateId"];
+          this.plugin.agentlensSettings.defaultTemplateId = value as AgentLensSettings["defaultTemplateId"];
           await this.plugin.saveSettings();
         }));
 
     new Setting(containerEl)
       .setName("Add platform tag")
       .setDesc("Add the normalized source platform to note tags.")
-      .addToggle((toggle) => toggle.setValue(this.plugin.settings.addPlatformTag).onChange(async (value) => {
-        this.plugin.settings.addPlatformTag = value;
+      .addToggle((toggle) => toggle.setValue(this.plugin.agentlensSettings.addPlatformTag).onChange(async (value) => {
+        this.plugin.agentlensSettings.addPlatformTag = value;
         await this.plugin.saveSettings();
       }));
 
     new Setting(containerEl)
       .setName("Add creator tag")
       .setDesc("Add a creator/<handle> tag when a stable creator name is available.")
-      .addToggle((toggle) => toggle.setValue(this.plugin.settings.addCreatorTag).onChange(async (value) => {
-        this.plugin.settings.addCreatorTag = value;
+      .addToggle((toggle) => toggle.setValue(this.plugin.agentlensSettings.addCreatorTag).onChange(async (value) => {
+        this.plugin.agentlensSettings.addCreatorTag = value;
         await this.plugin.saveSettings();
       }));
 
     new Setting(containerEl)
       .setName("Add media type tags")
       .setDesc("Add media/image, media/video, media/audio or media/file tags returned for the post.")
-      .addToggle((toggle) => toggle.setValue(this.plugin.settings.addMediaTags).onChange(async (value) => {
-        this.plugin.settings.addMediaTags = value;
+      .addToggle((toggle) => toggle.setValue(this.plugin.agentlensSettings.addMediaTags).onChange(async (value) => {
+        this.plugin.agentlensSettings.addMediaTags = value;
         await this.plugin.saveSettings();
       }));
 
@@ -173,20 +173,20 @@ export class AgentLensSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Default Auto-Fetch frequency")
       .setDesc("Applies only to creators followed after this setting changes.")
-      .addText((text) => text.setValue(String(this.plugin.settings.defaultAutoEvery)).onChange(async (value) => {
+      .addText((text) => text.setValue(String(this.plugin.agentlensSettings.defaultAutoEvery)).onChange(async (value) => {
         const parsed = Number.parseInt(value, 10);
-        this.plugin.settings.defaultAutoEvery = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SETTINGS.defaultAutoEvery;
+        this.plugin.agentlensSettings.defaultAutoEvery = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SETTINGS.defaultAutoEvery;
         await this.plugin.saveSettings();
       }))
       .addDropdown((dropdown) => dropdown
         .addOption("hour", "Hour(s)")
         .addOption("day", "Day(s)")
         .addOption("week", "Week(s)")
-        .setValue(this.plugin.settings.defaultAutoUnit)
+        .setValue(this.plugin.agentlensSettings.defaultAutoUnit)
         .onChange(async (value) => {
-          this.plugin.settings.defaultAutoUnit = value === "week" ? "week" : value === "day" ? "day" : "hour";
-          if (this.plugin.settings.defaultAutoUnit === "week") {
-            this.plugin.settings.defaultAutoEvery = Math.min(12, this.plugin.settings.defaultAutoEvery);
+          this.plugin.agentlensSettings.defaultAutoUnit = value === "week" ? "week" : value === "day" ? "day" : "hour";
+          if (this.plugin.agentlensSettings.defaultAutoUnit === "week") {
+            this.plugin.agentlensSettings.defaultAutoEvery = Math.min(12, this.plugin.agentlensSettings.defaultAutoEvery);
           }
           await this.plugin.saveSettings();
         }));
@@ -194,8 +194,8 @@ export class AgentLensSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Default daily time")
       .setDesc("Used for new once-a-day creators; existing schedules are not changed.")
-      .addText((text) => text.setPlaceholder("09:00").setValue(this.plugin.settings.defaultAutoPreferredTime).onChange(async (value) => {
-        this.plugin.settings.defaultAutoPreferredTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(value) ? value : DEFAULT_SETTINGS.defaultAutoPreferredTime;
+      .addText((text) => text.setPlaceholder("09:00").setValue(this.plugin.agentlensSettings.defaultAutoPreferredTime).onChange(async (value) => {
+        this.plugin.agentlensSettings.defaultAutoPreferredTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(value) ? value : DEFAULT_SETTINGS.defaultAutoPreferredTime;
         await this.plugin.saveSettings();
       }));
 
@@ -213,7 +213,7 @@ export class AgentLensSettingTab extends PluginSettingTab {
     void this.plugin.diagnosticsSummary().then(
       (summary) => diagnostics.setDesc(formatDiagnostics(summary)),
       () => diagnostics.setDesc("Privacy-safe diagnostics are temporarily unavailable. Tokens, paths and note content remain excluded.")
-    );
+);
 
   }
 }

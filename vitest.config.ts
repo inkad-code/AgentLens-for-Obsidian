@@ -4,6 +4,8 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": new URL("./src", import.meta.url).pathname,
+      "electron": new URL("./tests/mocks/electron.ts", import.meta.url).pathname,
+      "@electron/remote": new URL("./tests/mocks/electron.ts", import.meta.url).pathname,
       "obsidian": new URL("./tests/mocks/obsidian.ts", import.meta.url).pathname
     }
   },

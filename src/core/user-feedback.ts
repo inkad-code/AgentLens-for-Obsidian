@@ -233,7 +233,8 @@ export function userMessage(error: unknown, context: FeedbackContext = "action")
   const data = record(error);
   const execution = record(data.execution ?? record(data.details).execution);
   const readOnly = context === "read_only" || data.requestMethod === "GET";
-  const code = String(data.serverCode ?? data.code ?? "");
+  const rawCode = data.serverCode ?? data.code;
+  const code = typeof rawCode === "string" || typeof rawCode === "number" ? String(rawCode) : "";
   const raw = typeof error === "string" ? error : typeof data.message === "string" ? data.message : "";
   // Evidence about an unconfirmed operation takes precedence over transport symptoms.
   if (execution.failureClass === "reconciliation_required") return feedbackCopy.unknownResult;

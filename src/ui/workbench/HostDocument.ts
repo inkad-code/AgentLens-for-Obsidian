@@ -5,6 +5,6 @@ export const HostDocumentContext = createContext<Document | null>(null);
 export function useHostDocument(): Document {
   return useContext(HostDocumentContext) ?? document;
 }
-export function useHostWindow(): Window & typeof globalThis {
-  return (useHostDocument().defaultView ?? window) as Window & typeof globalThis;
+export function useHostWindow(): typeof window {
+  return (useHostDocument().defaultView ?? window);
 }

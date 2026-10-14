@@ -1,3 +1,4 @@
+import type { SyntheticEvent } from "react";
 import { saveProgressLabel } from "./savePresentation";
 import { BatchSaveView } from "./BatchSaveView";
 import { NoteProperties } from "./NoteProperties";
@@ -108,11 +109,11 @@ export function SingleFetchPane({
         setSaved(null);
       },
       (caught) => { if (!cancelled) setError(message(caught)); }
-    );
+);
     return () => { cancelled = true; };
   }, [service, preview, folderPath, mediaPolicy, templateId]);
 
-  async function fetchPreview(event: React.FormEvent) {
+  async function fetchPreview(event: SyntheticEvent) {
     event.preventDefault();
     if (!service || retryBlocked) return;
     const revision = sourceRevision.current;
@@ -286,15 +287,15 @@ export function SingleFetchPane({
               {saveProgress && <p role="status">{saveProgressLabel(saveProgress)}</p>}
 
             </>
-          ) : (
+) : (
             <>
               <div className="agentlens-empty-proof" aria-hidden="true" />
               <h3>Paste a link to begin</h3>
               <p>AgentLens parses the source first. Nothing is written<br />to your Vault until you click Save.</p>
             </>
-          )}
+)}
         </section>}
       </div>
     </div>
-  );
+);
 }

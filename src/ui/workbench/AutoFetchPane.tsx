@@ -1,3 +1,4 @@
+import type { SyntheticEvent } from "react";
 import { RemoteImage } from "./RemoteImage";
 import { creatorFolderLink } from "./creatorAssets";
 import { mediaControlStyle } from "./singleControlAssets";
@@ -103,7 +104,7 @@ export function AutoFetchPane({
         setTimezoneConfirmed(setup.settings.confirmed);
       },
       (caught) => { if (active) { setSetupStatus("error"); setError(message(caught, "read_only")); } }
-    ).finally(() => active && setBusy(false));
+).finally(() => active && setBusy(false));
     return () => { active = false; };
   }, [service, signedIn, setupAttempt]);
 
@@ -136,7 +137,7 @@ export function AutoFetchPane({
     }
   }
 
-  async function parseProfile(event: React.FormEvent) {
+  async function parseProfile(event: SyntheticEvent) {
     event.preventDefault();
     if (!service) return;
     const revision = profileDraftRevision.current;
@@ -368,7 +369,7 @@ export function AutoFetchPane({
       <SupportedPlatforms capabilities={capabilities} mode="autoFetch" />
       {!signedIn ? (
         <WorkflowOnboarding variant="auto" onRequestSignUp={onRequestSignUp} />
-      ) : (
+) : (
         <div className="agentlens-auto-layout">
           <button type="button" className="mod-cta agentlens-add-creator" onClick={() => { setAdding(true); setSetupStep(0); }} disabled={busy || setupStatus !== "ready"}>+ Add creator</button>
           {adding && <WorkbenchDialog textClose className={`agentlens-creator-dialog step-${setupStep}`} title="Auto-Fetch New Posts" onClose={() => { if (!busy) closeSetup(); }}>
@@ -458,9 +459,9 @@ export function AutoFetchPane({
           </section>
           {error && !adding && <p className="agentlens-inline-error" role="alert">{error}</p>}
         </div>
-      )}
+)}
     </div>
-  );
+);
 }
 
 function clampEvery(value: number, unit: FrequencyUnit, minuteMax = 59): number {

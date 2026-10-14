@@ -27,11 +27,15 @@
     "package:verify:review": "node scripts/verify-package.mjs --target=production --profile=single-fetch-review",
     "package:review": "node scripts/package-review.mjs",
     "build:full": "node scripts/build.mjs --target=production --profile=full",
-    "package:release": "node scripts/package-release.mjs"
+    "package:release": "node scripts/package-release.mjs",
+    "scan:source": "eslint src"
   },
   "dependencies": {
+    "http-proxy-agent": "7.0.2",
+    "https-proxy-agent": "7.0.6",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "socks-proxy-agent": "8.0.5"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
@@ -41,10 +45,13 @@
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "esbuild": "0.25.5",
+    "eslint": "9.39.4",
+    "eslint-plugin-obsidianmd": "0.4.2",
     "jsdom": "29.1.1",
     "obsidian": "1.13.1",
     "typescript": "5.8.3",
-    "vitest": "4.1.10"
+    "typescript-eslint": "8.71.2",
+    "vitest": "4.1.11"
   },
   "engines": {
     "node": ">=20"

@@ -20,7 +20,7 @@ describe("shared directory refresh contract", () => {
     let finish!: (value: ReturnType<typeof data>) => void;
     const old=vi.fn(()=>new Promise<ReturnType<typeof data>>(r=>{finish=r;}));
     const next=vi.fn().mockRejectedValue(new Error("offline"));
-    const h=renderHook(({load})=>usePlatformDirectory(options(load)),{initialProps:{load:old as ()=>Promise<ReturnType<typeof data>>}});
+    const h=renderHook(({load})=>usePlatformDirectory(options(load)),{initialProps:{load:old}});
     await settle();h.rerender({load:next});expect(h.result.current.result).toBeUndefined();await settle();
     await act(async()=>finish(data()));expect(h.result.current.result?.data).toBeUndefined();
     expect(h.result.current.result?.failed).toBe(true);

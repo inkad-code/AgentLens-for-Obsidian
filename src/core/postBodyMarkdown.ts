@@ -21,7 +21,7 @@ export function postBodyMarkdown(value: string, image?: (url: string) => string 
     if (tag === "td" || tag === "th") return `${body.trim()} | `;
     if (tag === "li") {
       const ordered = element.parentElement?.tagName.toLowerCase() === "ol";
-      const index = ordered ? [...element.parentElement!.children].indexOf(element) + 1 : 0;
+      const index = ordered ? [...element.parentElement.children].indexOf(element) + 1 : 0;
       return `\n${ordered ? `${index}.` : "-"} ${body.trim().replace(/\n/g, "\n  ")}\n`;
     }
     if (tag === "blockquote") return `\n\n${body.trim().split("\n").map(line => `> ${line}`).join("\n")}\n\n`;
@@ -29,13 +29,13 @@ export function postBodyMarkdown(value: string, image?: (url: string) => string 
     if (tag === "em" || tag === "i") return `*${body}*`;
     if (tag === "a") {
       const url = publicUrl(element.getAttribute("href"));
-      return url ? `[${body.replace(/([\[\]])/g, "\\$1")}](${url})` : body;
+      return url ? `[${body.replace(/([[\]])/g, "\\$1")}](${url})` : body;
     }
     if (tag === "img") {
       const source = element.getAttribute("data-src") || element.getAttribute("src");
       const url = publicUrl(source);
       if (!url) return "";
-      return `\n\n${image?.(source!) ?? `![${(element.getAttribute("alt") ?? "").replace(/([\[\]])/g, "\\$1")}](${url})`}\n\n`;
+      return `\n\n${image?.(source!) ?? `![${(element.getAttribute("alt") ?? "").replace(/([[\]])/g, "\\$1")}](${url})`}\n\n`;
     }
     return body;
   }

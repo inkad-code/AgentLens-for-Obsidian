@@ -106,7 +106,7 @@ export interface SingleWorkbenchPort {
   clientVersion(): string;
   previewSingle(url: string): Promise<PreviewResult>;
   planPreview(preview: PreviewResult, options?: WriteOptions): Promise<NoteWriteManifest>;
-  savePrepared(prepared: readonly PreparedSave[], onProgress?: ((contentKey: string, status: string) => void) | undefined): Promise<BatchSaveResult>;
+  savePrepared(prepared: readonly PreparedSave[], onProgress?: ((contentKey: string, status: string) => void)): Promise<BatchSaveResult>;
 }
 
 export interface BulkWorkbenchPort {
@@ -114,7 +114,7 @@ export interface BulkWorkbenchPort {
   clientVersion(): string;
   fetchProfilePage(url: string, cursor: string | null): Promise<FetchPage>;
   planPreview(preview: PreviewResult, options?: WriteOptions): Promise<NoteWriteManifest>;
-  savePrepared(prepared: readonly PreparedSave[], onProgress?: ((contentKey: string, status: string) => void) | undefined): Promise<BatchSaveResult>;
+  savePrepared(prepared: readonly PreparedSave[], onProgress?: ((contentKey: string, status: string) => void)): Promise<BatchSaveResult>;
 }
 
 export interface AutoFetchWorkbenchPort {

@@ -130,15 +130,15 @@ describe("AgentLensPlugin host adapter", () => {
     });
 
     await plugin.onload();
-    expect(plugin.settings).toEqual({
+    expect(plugin.agentlensSettings).toEqual({
       ...DEFAULT_SETTINGS,
       addPlatformTag: false,
       addCreatorTag: true,
       addMediaTags: true
     });
 
-    plugin.settings = {
-      ...plugin.settings,
+    plugin.agentlensSettings = {
+      ...plugin.agentlensSettings,
       defaultFolderPath: " Research//AgentLens/ ",
       defaultTemplateId: "compact",
       defaultAutoEvery: 2,

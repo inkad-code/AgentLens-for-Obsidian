@@ -78,7 +78,17 @@ export function compactPopoutChrome(document: Document): () => void {
     else unlockWidth();
   };
 
+  const markedTabs = new Set<Element>();
   const update = () => {
+    for (const tabs of markedTabs) tabs.classList.remove("agentlens-only-tabs");
+    markedTabs.clear();
+    for (const tabs of document.querySelectorAll(".workspace-tabs")) {
+      const contents = [...tabs.querySelectorAll(".workspace-leaf-content")];
+      if (contents.length && contents.every(leaf => leaf.getAttribute("data-type") === "agentlens-workbench")) {
+        tabs.classList.add("agentlens-only-tabs");
+        markedTabs.add(tabs);
+      }
+    }
     const leaves = document.querySelectorAll(".workspace-leaf-content");
     setCompact(leaves.length === 1 && leaves[0]?.getAttribute("data-type") === "agentlens-workbench");
   };
@@ -88,6 +98,7 @@ export function compactPopoutChrome(document: Document): () => void {
   update();
   return () => {
     observer.disconnect();
+    for (const tabs of markedTabs) tabs.classList.remove("agentlens-only-tabs");
     setCompact(false);
   };
 }

@@ -53,7 +53,7 @@ Single-post and profile bulk support can differ by platform and content type.
 
 Use this method while the plugin is awaiting inclusion in the Obsidian Community plugins directory.
 
-1. Download the plugin ZIP from this repository's **Releases** page and extract it.
+1. Download `agentlens-social-importer-0.1.0.zip` from this repository's **Releases** page and extract it. GitHub's automatic Source code ZIP is not an installation package.
 2. Open the Obsidian vault folder where you want to install the plugin.
 3. Open the hidden folder `<Vault>/.obsidian/plugins/` and create a folder named `agentlens-social-importer` inside it.
 4. Place `main.js`, `manifest.json`, and `styles.css` directly inside that folder. The final structure must be:
@@ -197,6 +197,12 @@ Upgrades take effect immediately; downgrades and cancellations take effect at th
 
 
 
+## Local files and clipboard access
+
+Desktop media downloads stream to a plugin-created directory under the operating system's temporary directory, outside the vault, with a **5 GiB per file** limit. This avoids loading a large media file entirely into memory. Completed downloads are copied into the destination vault; incomplete downloads are not reported as saved. Temporary files are removed after completion or handled failures; an application crash may leave temporary files until the operating system cleans them up. Allow sufficient free space on both the temporary and vault disks.
+
+The plugin enumerates vault paths to show destination folders and file counts, and checks notes in the selected folder to locate earlier imports. Vault contents are not uploaded for these operations. Clipboard reading only occurs when you invoke **Fetch from clipboard**; **Copy diagnostics** writes a privacy-safe summary when requested.
+
 ## Network access and privacy
 
 Content fetching requires an internet connection and is provided by **AgentLens API**. The plugin sends retrieval requests to this service and saves the returned content to your Obsidian vault.
@@ -238,3 +244,5 @@ Copyright (c) 2026 Wiphox, LLC. Released under the [MIT License](LICENSE).
 
 
 AgentLens Social Importer is a third-party plugin and is not an official Obsidian product.
+
+Release assets include three standalone plugin files, the manual installation ZIP, and SHA256SUMS. Download all four listed files to verify with `shasum -a 256 -c SHA256SUMS`. GitHub Actions build attestations can be checked with `gh attestation verify main.js -R inkad-code/AgentLens-for-Obsidian`.

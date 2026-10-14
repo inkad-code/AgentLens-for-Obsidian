@@ -13,7 +13,7 @@ import { WorkbenchView } from "@/ui/WorkbenchView";
 describe("native workbench view", () => {
   it("detaches once and lets the host close lifecycle unmount the workbench", async () => {
     const cancelPendingSignIn = vi.fn(async () => {});
-    const app = { vault: { getFiles: () => [], getName: () => "Test", getAllLoadedFiles: () => [] } };
+    const app = { vault: { on: vi.fn(), getFiles: () => [], getName: () => "Test", getAllLoadedFiles: () => [] } };
     let view: WorkbenchView;
     const leaf = { app, detach: vi.fn(() => (view as unknown as { close(): Promise<void> }).close()) };
     view = new WorkbenchView(leaf as unknown as WorkspaceLeaf, { cancelPendingSignIn } as unknown as AgentLensWorkbenchPort);
@@ -29,7 +29,7 @@ describe("native workbench view", () => {
   it("keeps its pane mounted while notes and folders open in the host", async () => {
     const noteLeaf = {openFile: vi.fn(async () => {})};
     const fileLeaf = {view: {revealInFolder: vi.fn(async () => {})}};
-    const app = {vault: {getFiles: () => [], getName: () => "Test", getAllLoadedFiles: () => [],
+    const app = {vault: {on: vi.fn(), getFiles: () => [], getName: () => "Test", getAllLoadedFiles: () => [],
       getAbstractFileByPath: (path: string) => path === "note.md" ? Object.assign(new TFile(), {path}) : Object.assign(new TFolder(), {path})},
       workspace: {getLeavesOfType: (type: string) => type === "markdown" ? [noteLeaf] : [fileLeaf],
         revealLeaf: vi.fn(async () => {}), getLeaf: vi.fn()}};
@@ -48,4 +48,19 @@ describe("native workbench view", () => {
     await act(() => view.onClose());
     view.contentEl.remove();
   });
+  it("caches folder counts until a Vault event invalidates them", async () => {
+    const handlers = new Map<string, () => void>();
+    const getFiles = vi.fn(() => [Object.assign(new TFile(), { path: "Inbox/note.md" })]);
+    const app = { vault: { on: (event: string, handler: () => void) => { handlers.set(event, handler); },
+      getFiles, getName: () => "Test", getAllLoadedFiles: () => [] } };
+    const view = new WorkbenchView({app} as unknown as WorkspaceLeaf, {} as AgentLensWorkbenchPort);
+    await act(() => view.onOpen());
+    await act(async () => { view.configure("bulk"); });
+    expect(getFiles).toHaveBeenCalledTimes(1);
+    handlers.get("rename")!();
+    await act(async () => { view.configure("single"); });
+    expect(getFiles).toHaveBeenCalledTimes(2);
+    await act(() => view.onClose());
+  });
+
 });

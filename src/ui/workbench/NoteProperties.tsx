@@ -6,7 +6,15 @@ export function NoteProperties({ frontmatter }: { frontmatter: Readonly<Record<s
   return <section className="agentlens-note-properties" aria-label={t("note.propertiesLabel")}>
     <h4>{t("note.properties")}</h4>
     <dl>{Object.entries(frontmatter).map(([key, value]) => <div key={key}>
-      <dt>{key}</dt><dd>{Array.isArray(value) ? value.join(", ") || "—" : value == null || value === "" ? "—" : String(value)}</dd>
+      <dt>{key}</dt><dd>{formatProperty(value)}</dd>
     </div>)}</dl>
   </section>;
+}
+
+function formatProperty(value: unknown): string {
+  if (value == null || value === "") return "—";
+  if (Array.isArray(value)) return value.map(formatProperty).join(", ") || "—";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value) ?? "—";
 }

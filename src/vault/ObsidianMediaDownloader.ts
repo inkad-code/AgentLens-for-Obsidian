@@ -7,7 +7,7 @@ export class ObsidianMediaDownloader {
   constructor(
     private readonly maxBytes: number,
     private readonly send: RequestUrlFn = requestUrl
-  ) {}
+) {}
 
   async download(media: NormalizedMedia, signal?: AbortSignal): Promise<ArrayBuffer> {
     signal?.throwIfAborted();
@@ -44,7 +44,7 @@ function validateMediaResponse(response: RequestUrlResponse, media: NormalizedMe
     throw new Error("Media download returned an error document or an unsupported playlist.");
   }
   const prefix = new TextDecoder().decode(bytes.slice(0, 512)).trimStart();
-  if (/^(?:<!doctype\s+html|<html\b|<head\b|<body\b|<\?xml\b|<MPD\b|#EXTM3U\b|[\[{])/i.test(prefix)) {
+  if (/^(?:<!doctype\s+html|<html\b|<head\b|<body\b|<\?xml\b|<MPD\b|#EXTM3U\b|[[{])/i.test(prefix)) {
     throw new Error("Media download returned an error document or an unsupported playlist.");
   }
   if ((media.kind === "video" && /^(?:image|audio)\//.test(contentType))
@@ -66,14 +66,14 @@ function abortable<T>(promise: Promise<T>, signal?: AbortSignal, timeoutMs?: num
     const finish = (callback: () => void) => {
       if (settled) return;
       settled = true;
-      if (timer !== undefined) clearTimeout(timer);
+      if (timer !== undefined) window.clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
       callback();
     };
-    const abort = () => finish(() => reject(signal?.reason ?? new DOMException("Download cancelled", "AbortError")));
-    const timer = timeoutMs === undefined ? undefined : setTimeout(() => finish(() => reject(new Error("Media download timed out. Please retry the failed attachment."))), timeoutMs);
+    const abort = () => finish(() => reject(signal?.reason instanceof Error ? signal.reason : new DOMException("Download cancelled", "AbortError")));
+    const timer = timeoutMs === undefined ? undefined : window.setTimeout(() => finish(() => reject(new Error("Media download timed out. Please retry the failed attachment."))), timeoutMs);
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) abort();
-    promise.then(value => finish(() => resolve(value)), error => finish(() => reject(error)));
+    promise.then(value => finish(() => resolve(value)), error => finish(() => reject(error instanceof Error ? error : new Error("Media download failed."))));
   });
 }

@@ -20,7 +20,6 @@ import { ObsidianMediaDownloader } from "./vault/ObsidianMediaDownloader";
 import apiTargets from "../api-targets.json";
 import { ConnectivityGate } from "./runtime/ConnectivityGate";
 import { mediaDownloadLimit } from "./core/platformPolicy";
-import { designAssets } from "./ui/workbench/designAssets";
 import ribbonLogo from "./ui/workbench/assets/agentlens-ribbon-logo.svg";
 
 const AGENTLENS_RIBBON_ICON = "agentlens-brand";
@@ -54,7 +53,7 @@ function dataUrlToIconContent(dataUrl: string): string {
 }
 
 export default class AgentLensPlugin extends Plugin {
-  settings: AgentLensSettings = DEFAULT_SETTINGS;
+  agentlensSettings: AgentLensSettings = DEFAULT_SETTINGS;
   private openingWorkbench: Promise<void> | undefined;
   private workbenchService!: AgentLensWorkbenchService;
   private latestState?: Readonly<AgentLensPluginState>;
@@ -94,7 +93,7 @@ export default class AgentLensPlugin extends Plugin {
         () => crypto.randomUUID(),
         this.manifest.version,
         apiVersion
-      ),
+),
       {
         installationId: state.installationId,
         deviceId: `obsidian-${state.installationId}`,
@@ -102,11 +101,11 @@ export default class AgentLensPlugin extends Plugin {
         obsidianVersion: apiVersion,
         platform: currentPlatform()
       }
-    );
+);
     const verification = new HumanVerification(
       url => window.open(url, "_blank", "noopener,noreferrer"),
       new URL(process.env.AGENTLENS_API_BASE_URL ?? apiTargets.production).origin
-    );
+);
     this.registerObsidianProtocolHandler("agentlens-human-verification", params => verification.receive(params));
     this.register(() => verification.dispose());
     const auth = new AuthService(
@@ -114,10 +113,10 @@ export default class AgentLensPlugin extends Plugin {
       new ObsidianRefreshTokenPersistence(
         this.stateStore,
         new SecretTokenStore(this.app.secretStorage)
-      ),
+),
       () => Date.now(),
       signal => verification.request(signal)
-    );
+);
     const createVaultWriter = (options: {
       folderPath?: string | undefined;
       mediaPolicy?: AgentLensSettings["defaultMediaPolicy"] | undefined;
@@ -131,7 +130,7 @@ export default class AgentLensPlugin extends Plugin {
       () => crypto.randomUUID(),
       Platform.isMobile ? new ObsidianMediaDownloader(mediaDownloadLimit(true)) : new DesktopMediaDownloader(),
       createVaultWriter
-    );
+);
 
     this.registerView(WORKBENCH_VIEW_TYPE, leaf => new WorkbenchView(leaf, this.workbenchService, this.workbenchDefaults()));
 
@@ -164,7 +163,7 @@ export default class AgentLensPlugin extends Plugin {
         void navigator.clipboard.readText().then(
           (value) => this.openWorkbench("single", value),
           () => new Notice("Clipboard access is unavailable. Paste the link in AgentLens instead.")
-        );
+);
       }
     });
     this.addCommand({
@@ -188,9 +187,9 @@ export default class AgentLensPlugin extends Plugin {
             result.skipped === "signed_out"
               ? "Sign in before syncing Auto-Fetch creators."
               : `Auto-Fetch checked ${result.leases} creator check(s); ${result.saved} note(s) saved.${result.deferred ? ` ${result.deferred} waiting for another check.` : ""}${result.terminated ? ` ${result.terminated} check(s) ended unsuccessfully.` : ""}`
-          ),
+),
           () => new Notice("Auto-Fetch sync failed. Open AgentLens to review the creator status.")
-        );
+);
       }
     });
 
@@ -234,13 +233,13 @@ export default class AgentLensPlugin extends Plugin {
 
   private workbenchDefaults() {
     return {
-      locale: this.settings.locale,
-      folderPath: this.settings.defaultFolderPath,
-      templateId: this.settings.defaultTemplateId,
-      mediaPolicy: this.settings.defaultMediaPolicy,
-      autoEvery: this.settings.defaultAutoEvery,
-      autoUnit: this.settings.defaultAutoUnit,
-      autoPreferredTime: this.settings.defaultAutoPreferredTime
+      locale: this.agentlensSettings.locale,
+      folderPath: this.agentlensSettings.defaultFolderPath,
+      templateId: this.agentlensSettings.defaultTemplateId,
+      mediaPolicy: this.agentlensSettings.defaultMediaPolicy,
+      autoEvery: this.agentlensSettings.defaultAutoEvery,
+      autoUnit: this.agentlensSettings.defaultAutoUnit,
+      autoPreferredTime: this.agentlensSettings.defaultAutoPreferredTime
     };
   }
 
@@ -249,12 +248,12 @@ export default class AgentLensPlugin extends Plugin {
     const stored = isRecord(data.agentlensSettings)
       ? data.agentlensSettings as Partial<AgentLensSettings>
       : {};
-    this.settings = normalizeAgentLensSettings(stored);
+    this.agentlensSettings = normalizeAgentLensSettings(stored);
   }
 
   async saveSettings(): Promise<void> {
-    this.settings = normalizeAgentLensSettings(this.settings);
-    await this.stateStore.patchRoot({ agentlensSettings: this.settings });
+    this.agentlensSettings = normalizeAgentLensSettings(this.agentlensSettings);
+    await this.stateStore.patchRoot({ agentlensSettings: this.agentlensSettings });
     if (this.workbenchService) {
       this.workbenchService.setVaultWriter(this.createVaultWriter());
     }
@@ -266,12 +265,12 @@ export default class AgentLensPlugin extends Plugin {
     templateId?: AgentLensSettings["defaultTemplateId"] | undefined;
   } = {}): VaultWriter {
     return new VaultWriter(new ObsidianVaultPort(this.app, this.stateStore), {
-      folderPath: options.folderPath ?? this.settings.defaultFolderPath,
-      mediaPolicy: options.mediaPolicy ?? this.settings.defaultMediaPolicy,
-      templateId: options.templateId ?? this.settings.defaultTemplateId,
-      addPlatformTag: this.settings.addPlatformTag,
-      addCreatorTag: this.settings.addCreatorTag,
-      addMediaTags: this.settings.addMediaTags,
+      folderPath: options.folderPath ?? this.agentlensSettings.defaultFolderPath,
+      mediaPolicy: options.mediaPolicy ?? this.agentlensSettings.defaultMediaPolicy,
+      templateId: options.templateId ?? this.agentlensSettings.defaultTemplateId,
+      addPlatformTag: this.agentlensSettings.addPlatformTag,
+      addCreatorTag: this.agentlensSettings.addCreatorTag,
+      addMediaTags: this.agentlensSettings.addMediaTags,
       maxDownloadBytes: mediaDownloadLimit(Platform.isMobile)
     });
   }

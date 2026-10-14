@@ -1,4 +1,4 @@
-import { useState, useId, type FormEvent } from "react";
+import { useState, useId, type SyntheticEvent } from "react";
 import type { EmailCredentials } from "../../auth/AuthService";
 import { validRegistrationPassword } from "../../auth/PasswordPolicy";
 import { authAssets } from "./authAssets";
@@ -35,7 +35,7 @@ export function EmailAuthPage({mode,busy,browserPending,browserOpening,browserEr
   setResetBusy(true);setError(null);setNotice(null);
   try{await onPasswordReset(email.trim());setNotice("If an account uses this email, you’ll receive a reset link. Check your inbox.");}catch(caught){setError(message(caught,"auth"));}finally{setResetBusy(false);}
  }
- async function submit(event:FormEvent) {
+ async function submit(event:SyntheticEvent) {
   event.preventDefault();if(busy)return;setError(null);setNotice(null);setInvalidField(null);
   if(registration && password!==confirm){setError("Passwords do not match.");setInvalidField("confirm");return;}
   if(registration && !validRegistrationPassword(password)){setError("The password must be at least 8 characters and include a letter, a number, and a special character.");setInvalidField("password");return;}

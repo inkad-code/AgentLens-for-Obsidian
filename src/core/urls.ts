@@ -20,7 +20,7 @@ export function publicLinkFromText(raw: string): string {
   return link;
 }
 
-export function redactPersistentUrl(rawUrl: string, expiresAt?: string | undefined): string {
+export function redactPersistentUrl(rawUrl: string, expiresAt?: string): string {
   try {
     const url = new URL(rawUrl);
     if (url.protocol !== "https:" && url.protocol !== "http:") return "";

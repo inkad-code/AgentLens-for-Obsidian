@@ -34,7 +34,7 @@ export class SchedulerCoordinator {
     private readonly requests: RequestCoordinator,
     private readonly createId: () => string,
     private readonly operations: SchedulerOperations
-  ) {}
+) {}
 
   runScheduled(reason: SchedulerReconcileReason): Promise<SchedulerRunResult> {
     return this.requests.runExclusive("scheduler:reconcile", () => this.runScheduledOnce(reason));
@@ -44,14 +44,14 @@ export class SchedulerCoordinator {
     return this.requests.runExclusive(
       `scheduler:manual:${creator.creatorId}`,
       () => this.runCreatorNowOnce(creator)
-    );
+);
   }
 
   retryCreator(creator: CreatorRecord): Promise<SchedulerRunResult> {
     return this.requests.runExclusive(
       `scheduler:retry:${creator.creatorId}`,
       () => this.retryCreatorOnce(creator)
-    );
+);
   }
 
   importCreatorBaseline(creator: CreatorRecord): Promise<BatchSaveResult> {
@@ -64,13 +64,13 @@ export class SchedulerCoordinator {
     const action = await this.durableActions.getOrCreateRemoteAction(
       remoteScope("creator-baseline", creator.creatorId),
       "creator-baseline"
-    );
+);
     try {
       const page = await this.api.baselineImport(token, creator.creatorId, action.requestId, action.idempotencyKey);
       const result = await this.operations.saveMany(
         page.content.map((post) => ({ post, fetchId: page.fetchId, demo: false })),
         { folderPath: creator.saveFolderPath, templateId: creator.noteTemplateId, mediaPolicy: creator.mediaPolicy }
-      );
+);
       if (result.failures.length === 0) await this.durableActions.remove([action.id]);
       return result;
     } catch (error) {
@@ -89,7 +89,7 @@ export class SchedulerCoordinator {
       remoteScope("scheduler-reconcile", reason),
       "scheduler-reconcile",
       ({ requestId, idempotencyKey }) => this.api.reconcile(token, reason, requestId, idempotencyKey)
-    );
+);
     // Persist every admitted lease before running any of them. A failure in one
     // creator must not discard another creator's original target snapshot.
     for (const lease of reconciled.leases) await this.durableActions.prepareSchedulerCheckpoint(accountId, lease);
@@ -100,7 +100,7 @@ export class SchedulerCoordinator {
       try { await this.runCheckpoint(token, checkpoint, reason, result); }
       catch (error) { failure ??= error; }
     }
-    if (failure) throw failure;
+    if (failure) throw failure instanceof Error ? failure : new Error("Scheduled import failed.");
     return result;
   }
 
@@ -243,7 +243,7 @@ export class SchedulerCoordinator {
     page: CreatorUpdatePage,
     lease: SchedulerLease,
     reason: string
-  ): Promise<BatchSaveResult> {
+): Promise<BatchSaveResult> {
     const previews: PreviewResult[] = page.previews.map((post) => ({
       post,
       fetchId: page.fetchId,
@@ -267,7 +267,7 @@ export class SchedulerCoordinator {
     saved: BatchSaveResult,
     callbackResults: WriteResultInput[],
     completedWriteIds: string[]
-  ): Promise<void> {
+): Promise<void> {
     await this.requireSameSession(token);
     let manifest: NoteWriteManifest | null = null;
     let pendingActionId: string | null = null;
@@ -284,7 +284,7 @@ export class SchedulerCoordinator {
           errorCode: "VAULT_WRITE_INTERRUPTED"
         }]),
         `auto-write-retry-${page.leaseId}-${manifest.contentKey}`
-      );
+);
       const write = await this.operations.writeLocal(preview, manifest);
       completedWriteIds.push(pendingActionId);
       saved.successes.push({ write, callback: "not_required" });
@@ -311,7 +311,7 @@ export class SchedulerCoordinator {
     saved: BatchSaveResult,
     callbackResults: WriteResultInput[],
     completedWriteIds: readonly string[]
-  ): Promise<void> {
+): Promise<void> {
     if (callbackResults.length === 0) return;
     const request = autoWriteRequest(page, reason, callbackResults);
     const idempotencyKey = `auto-results-${page.leaseId}-${page.requestId ?? this.createId()}`;
@@ -324,7 +324,7 @@ export class SchedulerCoordinator {
         page.fetchRunId,
         page.fetchId,
         callbackResults.filter((result) => result.status !== "failed").map((result) => result.contentKey)
-      );
+);
       await this.durableActions.clearCallback(idempotencyKey);
     } catch {
       saved.successes = saved.successes.map(({ write }) => ({ write, callback: "pending" }));

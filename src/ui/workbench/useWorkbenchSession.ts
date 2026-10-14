@@ -9,7 +9,7 @@ import { message } from "./shared";
 
 export function systemBrowserOpener(): ((url: string) => Promise<void>) | null {
   try {
-    const loader = (globalThis as { require?: (id: string) => unknown }).require
+    const loader = (window as { require?: (id: string) => unknown }).require
       ?? (typeof require === "function" ? require : null);
     const electron = loader?.("electron") as { shell?: { openExternal?: (url: string) => Promise<void> } } | undefined;
     const shell = electron?.shell;

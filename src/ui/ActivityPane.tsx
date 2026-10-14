@@ -54,7 +54,7 @@ export function ActivityPane({ service, onBack }: {
         setNextCursor(null);
         setError(message(failure));
       }
-    ).finally(() => { if (active) setBusy(false); });
+).finally(() => { if (active) setBusy(false); });
     return () => { active = false; };
   }, [service, filters]);
 
@@ -106,10 +106,11 @@ export function ActivityPane({ service, onBack }: {
       if (revision !== queryRevision.current) return;
       const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: "application/json" });
       const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
+      const link = document.body.createEl("a");
       link.href = url;
       link.download = "agentlens-obsidian-activity.json";
       link.click();
+      link.remove();
       URL.revokeObjectURL(url);
     } catch (failure) {
       if (revision === queryRevision.current) setError(message(failure));
@@ -152,7 +153,7 @@ export function ActivityPane({ service, onBack }: {
           </div>}
       <BackToTop />
     </main>
-  );
+);
 }
 
 function ActivityDetailPanel({ detail, onClose }: { detail: ActivityDetail; onClose: () => void }) {

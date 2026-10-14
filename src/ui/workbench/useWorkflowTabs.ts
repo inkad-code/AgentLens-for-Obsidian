@@ -10,7 +10,7 @@ export const WORKBENCH_TABS: ReadonlyArray<{ id: WorkbenchTab; label: string }> 
 export function useWorkflowTabs(initialTab: WorkbenchTab, onDirtyStateChange?: (dirty: boolean) => void) {
   const [activeTab, setActiveTab] = useState<WorkbenchTab>(initialTab);
   const [drafts, setDrafts] = useState<Record<WorkbenchTab, boolean>>({ single: false, bulk: false, auto: false });
-  const [resetVersions, setResetVersions] = useState<Record<WorkbenchTab, number>>({ single: 0, bulk: 0, auto: 0 });
+  const [resetVersions] = useState<Record<WorkbenchTab, number>>({ single: 0, bulk: 0, auto: 0 });
 
   useEffect(() => {
     onDirtyStateChange?.(Object.values(drafts).some(Boolean));

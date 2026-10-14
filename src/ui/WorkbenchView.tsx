@@ -12,6 +12,7 @@ export const WORKBENCH_VIEW_TYPE = "agentlens-workbench";
 
 export class WorkbenchView extends ItemView {
   private root: Root | undefined;
+  private folderCounts: Record<string, number> | undefined;
   private hasDraft = false;
   private restoreChrome: (() => void) | undefined;
 
@@ -22,7 +23,7 @@ export class WorkbenchView extends ItemView {
     leaf: WorkspaceLeaf,
     private readonly service: AgentLensWorkbenchPort,
     private readonly defaults?: WorkbenchDefaults | undefined
-  ) { super(leaf); }
+) { super(leaf); }
 
   getViewType(): string { return WORKBENCH_VIEW_TYPE; }
   getDisplayText(): string { return "AgentLens"; }
@@ -38,6 +39,10 @@ export class WorkbenchView extends ItemView {
 
   async onOpen(): Promise<void> {
     this.contentEl.addClass("agentlens-workbench-view", "agentlens-workbench-root");
+    const invalidateFolders = () => { this.folderCounts = undefined; };
+    this.registerEvent(this.app.vault.on("create", invalidateFolders));
+    this.registerEvent(this.app.vault.on("delete", invalidateFolders));
+    this.registerEvent(this.app.vault.on("rename", invalidateFolders));
     this.root = createRoot(this.contentEl);
     this.renderWorkbench();
   }
@@ -48,18 +53,19 @@ export class WorkbenchView extends ItemView {
     this.renderWorkbench();
   }
 
-  private readonly refreshFolders = (): void => { this.renderWorkbench(); };
+  private readonly refreshFolders = (): void => { this.folderCounts = undefined; this.renderWorkbench(); };
 
   private renderWorkbench(): void {
 
-    const folderCounts: Record<string, number> = {};
-    for (const file of this.app.vault.getFiles()) {
+    const folderCounts: Record<string, number> = this.folderCounts ?? {};
+    if (!this.folderCounts) for (const file of this.app.vault.getFiles()) {
       const parts = file.path.split('/');
       for (let depth = 1; depth < parts.length; depth++) {
         const path = parts.slice(0, depth).join('/');
         folderCounts[path] = (folderCounts[path] ?? 0) + 1;
       }
     }
+    this.folderCounts = folderCounts;
     this.root?.render(
       <RemoteImageContext.Provider value={loadRemoteImage}><HostDocumentContext.Provider value={this.contentEl.ownerDocument}><WorkbenchApp
         key={`${this.initialTab}:${this.initialUrl ?? ""}`}
@@ -75,7 +81,7 @@ export class WorkbenchView extends ItemView {
         renderMarkdown={(markdown, element, sourcePath) => {
           const component = new Component();
           component.load();
-          const container = element.ownerDocument.createElement("div");
+          const container = element.createDiv();
           element.replaceChildren(container);
           void MarkdownRenderer.render(this.app, markdown, container, sourcePath, component).catch(() => {
             container.textContent = markdown;
@@ -111,7 +117,7 @@ export class WorkbenchView extends ItemView {
           }
         }}
       /></HostDocumentContext.Provider></RemoteImageContext.Provider>
-    );
+);
   }
 
   async onClose(): Promise<void> {

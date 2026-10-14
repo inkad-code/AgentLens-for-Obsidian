@@ -117,7 +117,7 @@ export class VaultWriter {
       this.vault,
       `${folderPath}/${noteFilename(post, fetchedAt)}`, key, post.canonicalUrl,
       !context.saveAsCopy, Boolean(context.saveAsCopy && knownFile)
-    );
+);
     const attachments = Object.freeze(planAttachments(
       this.vault,
       post,
@@ -126,7 +126,7 @@ export class VaultWriter {
       this.options.maxDownloadBytes,
       this.now(),
       !context.existingMediaNotePath || context.existingMediaNotePath === notePath ? context.existingMediaPaths : undefined
-    ));
+));
     const partialReasons = Object.freeze(attachments.flatMap((attachment) => attachment.partialReason ? [attachment.partialReason] : []));
     const renderedManagedBlock = renderManagedBlock(post, attachments);
     const managedDigest = stableDigest(renderedManagedBlock);
@@ -171,9 +171,9 @@ export class VaultWriter {
   async execute(
     manifest: NoteWriteManifest,
     sourceUrl: string,
-    resolveMedia?: ((mediaId: string) => Promise<DownloadedMedia>) | undefined,
+    resolveMedia?: ((mediaId: string) => Promise<DownloadedMedia>),
     context: VaultWriteContext = {}
-  ): Promise<VaultWriteResult> {
+): Promise<VaultWriteResult> {
     if (manifest.action === "blocked") {
       throw new AgentLensError("vault_conflict", manifest.reason, false);
     }
@@ -212,9 +212,9 @@ export class VaultWriter {
     file: VaultFileRef,
     manifest: NoteWriteManifest,
     sourceUrl: string,
-    resolveMedia?: ((mediaId: string) => Promise<DownloadedMedia>) | undefined,
+    resolveMedia?: ((mediaId: string) => Promise<DownloadedMedia>),
     signal?: AbortSignal
-  ): Promise<AttachmentWriteResult[]> {
+): Promise<AttachmentWriteResult[]> {
     const attachmentResults: AttachmentWriteResult[] = [];
     for (const attachment of manifest.attachments) {
       if (attachment.action === "skip") {
@@ -469,7 +469,7 @@ function noteFilename(post: NormalizedPost, _fetchedAt: string): string {
 function filenamePart(value: string, maxBytes: number): string {
   // Limit bytes as well as characters so CJK/emoji names fit filesystem limits.
   let result = "";
-  for (const char of value.normalize("NFKC").replace(/[\u0000-\u001f\u007f\\/:*?"<>|#^[\]]/g, "_").replace(/\s+/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "")) {
+  for (const char of Array.from(value.normalize("NFKC"), char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 ? "_" : char).join("").replace(/[\\/:*?"<>|#^[\]]/g, "_").replace(/\s+/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "")) {
     if (new TextEncoder().encode(result + char).length > maxBytes) break;
     result += char;
   }

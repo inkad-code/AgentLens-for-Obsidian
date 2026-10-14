@@ -47,7 +47,7 @@ export class DurableActionStore {
   constructor(
     private readonly stateStore: PluginStateStore,
     private readonly createId: () => string
-  ) {}
+) {}
 
   async schedulerCheckpoints(accountId: string, includeTerminal = false): Promise<SchedulerCheckpoint[]> {
     const state = await this.stateStore.load();
@@ -132,7 +132,7 @@ export class DurableActionStore {
     idempotencyPrefix: string,
     execute: (action: RemoteAction) => Promise<T>,
     options: { retainIdentityOnFailure?: boolean } = {}
-  ): Promise<T> {
+): Promise<T> {
     const action = await this.getOrCreateRemoteAction(operationKey, idempotencyPrefix);
     try {
       const result = await execute(action);
@@ -164,7 +164,7 @@ export class DurableActionStore {
       state.pendingActions = state.pendingActions.filter((pending) => pending.kind !== "write_manifest" || !completed.has(pending.id));
       const duplicate = state.pendingActions.some((pending) =>
         pending.kind === "result_callback" && parseCallback(pending)?.idempotencyKey === idempotencyKey
-      );
+);
       if (!duplicate) state.pendingActions.push(action);
       trimPendingActions(state);
     });
@@ -174,7 +174,7 @@ export class DurableActionStore {
     await this.stateStore.update((state) => {
       state.pendingActions = state.pendingActions.filter((action) =>
         action.kind !== "result_callback" || parseCallback(action)?.idempotencyKey !== idempotencyKey
-      );
+);
     });
   }
 
@@ -193,9 +193,9 @@ export class DurableActionStore {
   async prepareWrite(
     preview: PreviewResult,
     options: PendingWrite["options"],
-    request?: WriteResultsRequest | undefined,
-    idempotencyKey?: string | undefined
-  ): Promise<string> {
+    request?: WriteResultsRequest,
+    idempotencyKey?: string
+): Promise<string> {
     const action: PendingAction = {
       id: this.createId(),
       kind: "write_manifest",
@@ -211,7 +211,7 @@ export class DurableActionStore {
     await this.stateStore.update((state) => {
       const duplicate = idempotencyKey ? state.pendingActions.find((pending) =>
         pending.kind === "write_manifest" && parseWrite(pending)?.idempotencyKey === idempotencyKey
-      ) : undefined;
+) : undefined;
       if (duplicate) actionId = duplicate.id;
       else state.pendingActions.push(action);
       trimPendingActions(state);
