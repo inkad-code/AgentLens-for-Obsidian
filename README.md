@@ -53,22 +53,26 @@ Single-post and profile bulk support can differ by platform and content type.
 
 Use this method while the plugin is awaiting inclusion in the Obsidian Community plugins directory.
 
-1. Download the plugin ZIP from this repository's **Releases** page and extract it.
+1. Download **`agentlens-social-archiver-0.1.0.zip`** from the [0.1.0 Release](https://github.com/inkad-code/AgentLens-for-Obsidian/releases/tag/0.1.0) and extract it. Use this installation ZIP, not GitHub's automatically generated **Source code (zip)**.
 2. Open the Obsidian vault folder where you want to install the plugin.
-3. Open the hidden folder `<Vault>/.obsidian/plugins/` and create a folder named `AgentLens-for-Obsidian` inside it.
+3. Open the hidden folder `<Vault>/.obsidian/plugins/` and create a folder named `agentlens-social-archiver` inside it.
 4. Place `main.js`, `manifest.json`, and `styles.css` directly inside that folder. The final structure must be:
 
    ```text
-   <Vault>/.obsidian/plugins/AgentLens-for-Obsidian/
+   <Vault>/.obsidian/plugins/agentlens-social-archiver/
    ├── main.js
    ├── manifest.json
    └── styles.css
    ```
 
-   Do not nest an extra ZIP folder inside the plugin folder.
+   Do not nest an extra ZIP folder inside the plugin folder. The ZIP also includes this README, the LICENSE, and third-party notices. Keep these documents with your copy.
+
+   Alternatively, download `main.js`, `manifest.json`, and `styles.css` separately from the same Release. Obsidian community installation uses these standalone assets.
+
+   `SHA256SUMS` covers the three standalone files and the installation ZIP. On macOS/Linux, run `shasum -a 256 -c SHA256SUMS` with all four files in the same directory to verify their integrity.
 
 5. Restart Obsidian, or run **Reload app without saving** from the command palette after saving your work.
-6. Open **Settings → Community plugins** and enable **AgentLens-for-Obsidian**. If Obsidian displays a community plugin trust prompt, review and confirm it yourself.
+6. Open **Settings → Community plugins** and enable **AgentLens for Obsidian**. If Obsidian displays a community plugin trust prompt, review and confirm it yourself.
 7. Click the AgentLens download icon in the left ribbon, or run **AgentLens: Open panel** from the command palette.
 8. Click **Log in / Start Free** and sign in to your account, or register with your email address or Google account.
 

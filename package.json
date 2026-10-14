@@ -26,7 +26,8 @@
     "build:review": "node scripts/build.mjs --target=production --profile=single-fetch-review",
     "package:verify:review": "node scripts/verify-package.mjs --target=production --profile=single-fetch-review",
     "package:review": "node scripts/package-review.mjs",
-    "build:full": "node scripts/build.mjs --target=production --profile=full"
+    "build:full": "node scripts/build.mjs --target=production --profile=full",
+    "package:release": "node scripts/package-release.mjs"
   },
   "dependencies": {
     "react": "19.2.8",
