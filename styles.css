@@ -2403,13 +2403,13 @@ body.is-popout-window .workspace-leaf-content[data-type="agentlens-workbench"] >
 body.is-popout-window .workspace-leaf-content[data-type="agentlens-workbench"] > .view-content {
   padding: 0;
 }
-body.is-popout-window .workspace-tabs:has(.workspace-leaf-content[data-type="agentlens-workbench"]):not(:has(.workspace-leaf-content:not([data-type="agentlens-workbench"]))) > .workspace-tab-header-container {
+body.is-popout-window .workspace-tabs.agentlens-only-tabs > .workspace-tab-header-container {
   height: 30px;
   min-height: 30px;
   border-bottom: 0;
   -webkit-app-region: drag;
 }
-body.is-popout-window .workspace-tabs:has(.workspace-leaf-content[data-type="agentlens-workbench"]):not(:has(.workspace-leaf-content:not([data-type="agentlens-workbench"]))) > .workspace-tab-header-container > :is(.workspace-tab-header-container-inner, .workspace-tab-header-new-tab, .workspace-tab-header-tab-list) {
+body.is-popout-window .workspace-tabs.agentlens-only-tabs > .workspace-tab-header-container > :is(.workspace-tab-header-container-inner, .workspace-tab-header-new-tab, .workspace-tab-header-tab-list) {
   display: none;
 }
 
