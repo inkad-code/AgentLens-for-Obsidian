@@ -1,7 +1,7 @@
 {
   "id": "agentlens-social-importer",
   "name": "AgentLens Social Importer",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "minAppVersion": "1.11.4",
   "description": "Save public social content as traceable Markdown research notes.",
   "author": "AgentLens",
