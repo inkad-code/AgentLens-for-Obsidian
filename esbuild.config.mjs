@@ -1,4 +1,5 @@
 import esbuild from "esbuild";
+import { reactNoScripts } from "./scripts/react-no-scripts.mjs";
 import process from "node:process";
 import { apiBaseFor } from "./scripts/api-targets.mjs";
 
@@ -8,6 +9,7 @@ const releaseProfile = process.env.AGENTLENS_RELEASE_PROFILE ?? "single-fetch-re
 const context = await esbuild.context({
   entryPoints: ["src/main.ts"],
   bundle: true,
+  plugins: [reactNoScripts],
   banner: { js: `/* AgentLens release profile: ${releaseProfile} */` },
   external: [
     "node:*",

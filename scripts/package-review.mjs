@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const run = (args, options = {}) => execFileSync(process.execPath, args, { cwd: root, stdio: "inherit", ...options });
 run(["scripts/lint.mjs"]);
+run(["scripts/test-react-no-scripts.mjs"]);
 run(["scripts/build.mjs", "--target=production", "--profile=single-fetch-review"]);
 run(["node_modules/vitest/vitest.mjs", "run"], { env: { ...process.env, AGENTLENS_VERIFY_REVIEW_BUNDLE: "1" } });
 run(["scripts/test-activity-export-verifier.mjs"]);

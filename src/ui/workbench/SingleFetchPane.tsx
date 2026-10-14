@@ -217,7 +217,7 @@ export function SingleFetchPane({
   />;
 
   return (
-    <div className={`agentlens-pane agentlens-single-pane${preview ? " has-preview" : ""}`}>
+    <div className={`agentlens-pane agentlens-single-pane${preview ? " has-preview" : ""}${signedIn ? "" : " has-demo-help"}`}>
       <div className="agentlens-master-detail">
         <form className="agentlens-source-card" onSubmit={(event) => void fetchPreview(event)}>
           <div className="agentlens-url-bar">

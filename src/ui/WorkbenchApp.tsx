@@ -155,14 +155,14 @@ function WorkbenchContent({ initialTab = "single", initialUrl, service, onOpenNo
   }
 
   return (
-    <section className="agentlens-workbench" aria-labelledby={`${panelId}-workbench-name`}>
+    <section className={`agentlens-workbench${view === "login" || view === "register" ? " has-auth-page" : ""}`} aria-labelledby={`${panelId}-workbench-name`}>
       <span className="agentlens-sr-only" id={`${panelId}-workbench-name`}>AgentLens workbench</span>
       <header className="agentlens-workbench__header">
         <div className="agentlens-brandline">
           <img className="agentlens-brandmark" src={designAssets.imgLogo} width="24" height="24" alt="" />
           <h1>AgentLens</h1>
         </div>
-        {!SINGLE_FETCH_REVIEW && <nav className="agentlens-primary-nav" aria-label="Main navigation">
+        {!SINGLE_FETCH_REVIEW && <nav className={`agentlens-primary-nav${activeTab === "auto" && view !== "activity" ? " is-auto-active" : ""}`} aria-label="Main navigation">
           <button type="button" aria-pressed={activeTab !== "auto" && view !== "activity"} onClick={() => { setView("workflows"); setBulkNavigationVersion(value => value + 1); requestTab("single"); }}>{t("nav.single")}</button>
           <button type="button" id={`${panelId}-tab-auto`} aria-pressed={activeTab === "auto" && view !== "activity"} onClick={() => { setView("workflows"); requestTab("auto"); }}>{t("nav.auto")}</button>
         </nav>}

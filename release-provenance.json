@@ -2,14 +2,14 @@
   "version": "0.1.1",
   "profile": "single-fetch-review",
   "build_command": "npm ci && npm run build",
-  "automated_tests": 496,
+  "automated_tests": 498,
   "default_build_byte_identical": true,
-  "community_review": "not submitted",
+  "community_review": "scan remediation candidate; not yet published as a release",
   "assets": {
-    "main.js": "bd3cc5f2473b8f4939fc4df78be5df45d09ad6dade5402e766e83fbc8b836464",
+    "main.js": "c1eacb5a5e27b61307fae5bc5c70b7c454650bf4e31777a07bb17bb78a9021f1",
     "manifest.json": "a3ee5daea4c94d81f4d98065e3fe15c5a1e608c8b4655928b81dcdd1f03c6a32",
-    "styles.css": "83f83f27f76d03f14500425825bb23fe12ba7e534db126ea66abb0b0e9537e2e"
+    "styles.css": "0bde5033087dbea1ad3cd2b95828cb6ecc0fdfca879b6a86848543b81a619511"
   },
   "source_repository": "inkad-code/AgentLens-for-Obsidian",
-  "source_ref": "0.1.1"
+  "source_ref": "main"
 }
