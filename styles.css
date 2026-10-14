@@ -2377,6 +2377,25 @@ button:disabled > .agentlens-action-state-icon { background-image: var(--action-
 .agentlens-workbench-view > .agentlens-workbench { min-height: 100%; overflow: hidden; }
 .agentlens-workbench-view .agentlens-auth-page { overflow-y: auto; }
 
+/* Grow workflow surfaces with the window while preserving content-driven scrolling. */
+.agentlens-workbench__body { display: flex; flex-direction: column; }
+.agentlens-workbench__body > :is(.agentlens-pane__intro, .agentlens-platforms) { flex-shrink: 0; }
+.agentlens-workbench__body { padding-bottom: 16px; }
+.agentlens-import-shell:is(.is-single, .is-bulk) { display: flex; flex-direction: column; flex: 1 0 auto; }
+.agentlens-import-shell:is(.is-single, .is-bulk) > .agentlens-tabs { flex-shrink: 0; }
+.agentlens-import-shell:is(.is-single, .is-bulk) > section:not([hidden]) { display: flex; flex-direction: column; flex: 1 0 auto; }
+.agentlens-import-shell :is(.agentlens-single-pane, .agentlens-bulk-pane) { display: flex; flex-direction: column; flex: 1 0 auto; min-height: 0; }
+.agentlens-import-shell .agentlens-single-pane > .agentlens-master-detail { flex: 1 0 auto; }
+.agentlens-import-shell :is(.agentlens-source-card, .agentlens-bulk-toolbar) { flex-shrink: 0; }
+.agentlens-import-shell :is(.agentlens-single-pane, .agentlens-bulk-pane) .agentlens-preview-card.is-empty { flex: 1 0 auto; min-height: 400px; padding: 40px 12px; align-content: center; }
+.agentlens-import-shell .agentlens-onboarding { flex: 1 1 auto; min-height: auto; align-content: center; margin-bottom: 16px; }
+/* Keep the SVG tab curve at its original scale; extend only the surface below it. */
+.agentlens-import-shell:is(.is-single, .is-bulk)::before { bottom: auto; height: 80px; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.agentlens-import-shell:is(.is-single, .is-bulk)::after { content: ''; position: absolute; inset: 80px 0 0; z-index: -1; pointer-events: none; border-radius: 0 0 20px 20px; background: linear-gradient(180deg, var(--agentlens-color-surface), var(--agentlens-color-demo-surface)); }
+@media (max-width: 640px) {
+  .agentlens-workbench__body { padding-bottom: 12px; }
+}
+
 /* Compact chrome only in AgentLens pop-outs. Other tabs keep native controls. */
 body.is-popout-window .workspace-leaf-content[data-type="agentlens-workbench"] > .view-header {
   display: none;

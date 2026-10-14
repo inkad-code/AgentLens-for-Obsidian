@@ -31,17 +31,6 @@ export function compactPopoutChrome(document: Document): () => void {
     catch { return false; }
   };
 
-  const clampWidth = () => {
-    if (!compact || !alive()) return;
-    try {
-      const size = native?.getSize?.();
-      const height = size?.[1] ?? Math.max(1, Math.round(host.outerHeight));
-      if ((size?.[0] ?? 0) !== WORKBENCH_POPOUT_SIZE.width) {
-        native?.setSize?.(WORKBENCH_POPOUT_SIZE.width, height);
-      }
-    } catch { /* The native window may already be closing. */ }
-  };
-
   const lockWidth = () => {
     if (!alive()) return;
     try {
@@ -54,6 +43,7 @@ export function compactPopoutChrome(document: Document): () => void {
       const minHeight = Math.max(320, savedMinimum?.[1] ?? 320);
       const maxHeight = Math.max(minHeight, savedMaximum?.[1] && savedMaximum[1] > 0 ? savedMaximum[1] : 10_000);
       native?.setSize?.(WORKBENCH_POPOUT_SIZE.width, height);
+      // Native width limits avoid resize/setSize feedback during cross-display DPI changes.
       native?.setMinimumSize?.(WORKBENCH_POPOUT_SIZE.width, minHeight);
       native?.setMaximumSize?.(WORKBENCH_POPOUT_SIZE.width, maxHeight);
       native?.setMaximizable?.(false);
@@ -95,11 +85,9 @@ export function compactPopoutChrome(document: Document): () => void {
 
   const observer = new MutationObserver(update);
   observer.observe(document.body, { childList: true, subtree: true });
-  host.addEventListener("resize", clampWidth);
   update();
   return () => {
     observer.disconnect();
-    host.removeEventListener("resize", clampWidth);
     setCompact(false);
   };
 }

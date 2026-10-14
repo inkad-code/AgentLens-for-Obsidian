@@ -51,7 +51,7 @@ it("locks the dedicated pop-out to a fixed width while allowing height changes t
   expect(electronWindow.setMaximizable).toHaveBeenCalledWith(false);
   electronWindow.getSize.mockReturnValue([900, 880]);
   frame.contentWindow!.dispatchEvent(new Event("resize"));
-  expect(electronWindow.setSize).toHaveBeenLastCalledWith(WORKBENCH_POPOUT_SIZE.width, 880);
+  expect(electronWindow.setSize).toHaveBeenCalledTimes(1);
   const other = doc.createElement("div");
   other.className = "workspace-leaf-content";
   other.dataset.type = "markdown";
@@ -59,6 +59,36 @@ it("locks the dedicated pop-out to a fixed width while allowing height changes t
   await vi.waitFor(() => expect(electronWindow.setMinimumSize).toHaveBeenCalledWith(100, 100));
   expect(electronWindow.setMaximumSize).toHaveBeenCalledWith(2000, 2000);
   expect(electronWindow.setMaximizable).toHaveBeenCalledWith(true);
+  restore();
+  frame.remove();
+});
+
+it("does not write window dimensions back during cross-display resize events", () => {
+  const frame = document.createElement("iframe");
+  document.body.appendChild(frame);
+  const doc = frame.contentDocument!;
+  const electronWindow = {
+    getSize: vi.fn(() => [720, 900] as [number, number]),
+    setSize: vi.fn(),
+    setMinimumSize: vi.fn(),
+    setMaximumSize: vi.fn()
+  };
+  Object.assign(frame.contentWindow!, { electronWindow });
+  doc.body.classList.add("is-popout-window");
+  doc.body.innerHTML = '<div class="workspace-leaf-content" data-type="agentlens-workbench"></div>';
+  const restore = compactPopoutChrome(doc);
+  electronWindow.setSize.mockClear();
+  electronWindow.getSize.mockClear();
+
+  // Display scaling and manual vertical resizing must stay under native window control.
+  for (const size of [[1080, 1350], [721, 901], [720, 800]] as [number, number][]) {
+    electronWindow.getSize.mockReturnValue(size);
+    frame.contentWindow!.dispatchEvent(new Event("resize"));
+  }
+  expect(electronWindow.getSize).not.toHaveBeenCalled();
+  expect(electronWindow.setSize).not.toHaveBeenCalled();
+  expect(electronWindow.setMinimumSize).toHaveBeenCalledWith(720, 320);
+  expect(electronWindow.setMaximumSize).toHaveBeenCalledWith(720, 10_000);
   restore();
   frame.remove();
 });
