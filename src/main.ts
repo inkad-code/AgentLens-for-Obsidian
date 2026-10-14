@@ -1,3 +1,4 @@
+import { DesktopMediaDownloader } from "./vault/DesktopMediaDownloader";
 import { SINGLE_FETCH_REVIEW } from "./core/releaseProfile";
 import { addIcon, apiVersion, MarkdownView, Notice, Platform, Plugin } from "obsidian";
 import { DEFAULT_SETTINGS, AgentLensSettingTab, normalizeAgentLensSettings, type AgentLensSettings } from "./settings";
@@ -128,7 +129,7 @@ export default class AgentLensPlugin extends Plugin {
       createVaultWriter(),
       this.stateStore,
       () => crypto.randomUUID(),
-      new ObsidianMediaDownloader(mediaDownloadLimit(Platform.isMobile)),
+      Platform.isMobile ? new ObsidianMediaDownloader(mediaDownloadLimit(true)) : new DesktopMediaDownloader(),
       createVaultWriter
     );
 

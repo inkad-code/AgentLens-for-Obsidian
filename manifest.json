@@ -6,5 +6,5 @@
   "description": "Save public social content as traceable Markdown research notes.",
   "author": "AgentLens",
   "authorUrl": "https://agentlensapi.io",
-  "isDesktopOnly": false
+  "isDesktopOnly": true
 }

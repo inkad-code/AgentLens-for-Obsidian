@@ -10,6 +10,7 @@ const context = await esbuild.context({
   bundle: true,
   banner: { js: `/* AgentLens release profile: ${releaseProfile} */` },
   external: [
+    "node:*",
     "obsidian",
     "electron",
     "@codemirror/autocomplete",

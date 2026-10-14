@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { RequestUrlParam, RequestUrlResponse } from "obsidian";
+import { MOBILE_MEDIA_DOWNLOAD_LIMIT } from "@/core/platformPolicy";
 import { ObsidianMediaDownloader } from "@/vault/ObsidianMediaDownloader";
 
 function response(status: number, bytes: number): RequestUrlResponse {
@@ -104,4 +105,18 @@ it.each([
 ])("rejects %s instead of reporting a saved video", async (_label, content, contentType) => {
   const send = vi.fn(async () => ({ ...response(200, 0), headers: {"Content-Type":contentType}, arrayBuffer:new TextEncoder().encode(content).buffer }));
   await expect(new ObsidianMediaDownloader(1024, send).download({id:"v",kind:"video",sourceUrl:"https://cdn.example/v"})).rejects.toThrow();
+});
+
+
+it("accepts exactly 50 MiB on mobile and rejects one byte above it", async () => {
+  const media = { id: "mobile-boundary", kind: "video", sourceUrl: "https://cdn.example/video" } as const;
+  const send = vi.fn(async () => response(200, MOBILE_MEDIA_DOWNLOAD_LIMIT));
+  const downloader = new ObsidianMediaDownloader(MOBILE_MEDIA_DOWNLOAD_LIMIT, send);
+  expect(MOBILE_MEDIA_DOWNLOAD_LIMIT).toBe(52_428_800);
+  await expect(downloader.download({ ...media, sizeBytes: MOBILE_MEDIA_DOWNLOAD_LIMIT })).resolves.toHaveProperty("byteLength", 52_428_800);
+  send.mockClear();
+  await expect(downloader.download({ ...media, sizeBytes: MOBILE_MEDIA_DOWNLOAD_LIMIT + 1 })).rejects.toThrow("exceeds");
+  expect(send).not.toHaveBeenCalled();
+  send.mockImplementation(async () => response(200, MOBILE_MEDIA_DOWNLOAD_LIMIT + 1));
+  await expect(downloader.download(media)).rejects.toThrow("exceeds");
 });

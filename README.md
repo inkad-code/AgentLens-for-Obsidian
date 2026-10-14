@@ -201,6 +201,8 @@ Upgrades take effect immediately; downgrades and cancellations take effect at th
 
 
 
+Desktop media downloads stream to temporary files, with a limit of **5 GiB per file**, then copy completed files into the selected vault. Incomplete downloads are not reported as saved. Temporary files are removed after completion or failure. This requires temporary storage outside the vault and sufficient free disk space.
+
 ## Network access and privacy
 
 Content fetching requires an internet connection and is provided by **AgentLens API**. The plugin sends retrieval requests to this service and saves the returned content to your Obsidian vault.

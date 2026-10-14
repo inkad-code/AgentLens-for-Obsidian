@@ -1,4 +1,5 @@
 import { readFile, stat } from "node:fs/promises";
+import ts from "typescript";
 import { apiBaseFor, apiTargets } from "./api-targets.mjs";
 
 const manifest = JSON.parse(await readFile("manifest.json", "utf8"));
@@ -56,11 +57,28 @@ for (const [otherTarget, otherApiBase] of Object.entries(apiTargets)) {
 
 const unsupportedHostDependencies = [
   /\brequire\(["']electron(?:["'/])/, 
-  /\brequire\(["']node:/,
+
   /\brequire\(["'](?:fs|path|os|child_process)(?:["'/])/
 ];
 if (unsupportedHostDependencies.some((pattern) => pattern.test(bundle))) {
   throw new Error("main.js contains a Node or Electron dependency that is unavailable in mobile Obsidian.");
 }
+
+// Desktop streaming dependencies must remain lazy, so mobile can load the bundle.
+const allowedDesktopModules = new Set(["node:fs/promises", "node:os", "node:path", "node:http", "node:https"]);
+const bundleAst = ts.createSourceFile("main.js", bundle, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+function inspectDependencies(node) {
+  if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "require") {
+    const argument = node.arguments[0];
+    if (argument && ts.isStringLiteral(argument) && argument.text.startsWith("node:")) {
+      if (!allowedDesktopModules.has(argument.text)) throw new Error(`Unexpected desktop dependency: ${argument.text}`);
+      let parent = node.parent;
+      while (parent && !ts.isFunctionLike(parent)) parent = parent.parent;
+      if (!parent) throw new Error(`Eager desktop dependency is unavailable on mobile: ${argument.text}`);
+    }
+  }
+  ts.forEachChild(node, inspectDependencies);
+}
+inspectDependencies(bundleAst);
 
 console.log(`Verified AgentLens for Obsidian ${manifest.version} (${target}).`);

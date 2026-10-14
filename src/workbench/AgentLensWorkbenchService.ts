@@ -584,6 +584,9 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
               return await this.mediaDownloader!.download(item, signal);
             } catch (initialError) {
               signal?.throwIfAborted();
+              // Desktop follows Eagle WRITE-001: retain failed media for a later source fetch.
+              // Keep the existing mobile recovery behavior until its separate migration.
+              if (this.mediaDownloader?.refreshOnFailure === false) throw initialError;
               const token = await this.auth.accessToken();
               if (!token || preview.demo) throw initialError;
               const refreshed = await this.api.refreshMedia(

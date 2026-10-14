@@ -1,3 +1,4 @@
+import type { DownloadedMedia, DownloadedMediaFile } from "./DownloadedMedia";
 import type { MediaPolicy, NormalizedMedia, NormalizedPost, PersistedLedgerEntry } from "../core/domain";
 import { contentKey, mediaKey, cleanPostText, cleanPostTitle, creatorDisplayName, postContentTags, postDisplayTitle } from "../core/domain";
 import { AgentLensError } from "../core/errors";
@@ -24,6 +25,7 @@ export interface VaultPort {
   ensureFolder(path: string): Promise<void>;
   updateFrontmatter(file: VaultFileRef, values: Readonly<Record<string, unknown>>): Promise<void>;
   createBinary(path: string, data: ArrayBuffer): Promise<VaultFileRef>;
+  importMediaFile?(path: string, file: DownloadedMediaFile, signal?: AbortSignal): Promise<VaultFileRef>;
   findByAgentLensKey?(folderPath: string, contentKey: string, sourceUrl: string): Promise<VaultFileRef | null>;
   matchesAgentLensKey?(file: VaultFileRef, contentKey: string, sourceUrl: string): Promise<boolean>;
   recordNoteIdentity?(file: VaultFileRef, contentKey: string): Promise<void>;
@@ -169,7 +171,7 @@ export class VaultWriter {
   async execute(
     manifest: NoteWriteManifest,
     sourceUrl: string,
-    resolveMedia?: ((mediaId: string) => Promise<ArrayBuffer>) | undefined,
+    resolveMedia?: ((mediaId: string) => Promise<DownloadedMedia>) | undefined,
     context: VaultWriteContext = {}
   ): Promise<VaultWriteResult> {
     if (manifest.action === "blocked") {
@@ -210,7 +212,7 @@ export class VaultWriter {
     file: VaultFileRef,
     manifest: NoteWriteManifest,
     sourceUrl: string,
-    resolveMedia?: ((mediaId: string) => Promise<ArrayBuffer>) | undefined,
+    resolveMedia?: ((mediaId: string) => Promise<DownloadedMedia>) | undefined,
     signal?: AbortSignal
   ): Promise<AttachmentWriteResult[]> {
     const attachmentResults: AttachmentWriteResult[] = [];
@@ -228,8 +230,17 @@ export class VaultWriter {
         signal?.throwIfAborted();
         await this.vault.ensureFolder(attachmentFolder);
         const bytes = await resolveMedia(attachment.mediaId);
-        signal?.throwIfAborted();
-        await this.vault.createBinary(attachment.path, bytes);
+        try {
+          signal?.throwIfAborted();
+          if ("kind" in bytes) {
+            if (!this.vault.importMediaFile) throw new Error("This Vault cannot import desktop media files.");
+            await this.vault.importMediaFile(attachment.path, bytes, signal);
+          } else {
+            await this.vault.createBinary(attachment.path, bytes);
+          }
+        } finally {
+          if ("kind" in bytes) await bytes.cleanup();
+        }
         attachmentResults.push({ mediaId: attachment.mediaId, path: attachment.path, status: "saved" });
       } catch (error) {
         attachmentResults.push({ mediaId: attachment.mediaId, path: attachment.path, status: "failed",

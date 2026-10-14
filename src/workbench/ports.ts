@@ -23,7 +23,6 @@ import type { ExecutionOperation, ExecutionRecovery } from "../api/executions";
 import type { AuthState } from "../auth/AuthService";
 import type { NormalizedMedia } from "../core/domain";
 import type { NoteWriteManifest } from "../vault/VaultWriter";
-import type { ObsidianMediaDownloader } from "../vault/ObsidianMediaDownloader";
 import type {
   BatchSaveResult,
   FollowCreatorInput,
@@ -71,7 +70,10 @@ export interface AgentLensApiPort {
   writeResults(accessToken: string, input: WriteResultsRequest, idempotencyKey: string): Promise<{ accepted: number; success: number; partial: number; failed: number; skipped: number }>;
 }
 
-export type MediaDownloaderPort = Pick<ObsidianMediaDownloader, "download">;
+export interface MediaDownloaderPort {
+  readonly refreshOnFailure?: boolean;
+  download(media: NormalizedMedia, signal?: AbortSignal): Promise<import("../vault/DownloadedMedia").DownloadedMedia>;
+}
 
 export interface SessionWorkbenchPort {
   billing?: BillingPort;

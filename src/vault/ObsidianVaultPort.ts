@@ -1,4 +1,6 @@
-import { normalizePath, TFile, type App } from "obsidian";
+import { publishDesktopMedia } from "./DesktopMediaDownloader";
+import type { DownloadedMediaFile } from "./DownloadedMedia";
+import { normalizePath, TFile, FileSystemAdapter, type App } from "obsidian";
 import type { VaultFileRef, VaultPort } from "./VaultWriter";
 import type { PluginStateStore } from "../runtime/PluginStateStore";
 
@@ -42,6 +44,20 @@ export class ObsidianVaultPort implements VaultPort {
 
   async createBinary(path: string, data: ArrayBuffer): Promise<VaultFileRef> {
     return this.app.vault.createBinary(normalizePath(path), data);
+  }
+
+  async importMediaFile(path: string, file: DownloadedMediaFile, signal?: AbortSignal): Promise<VaultFileRef> {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) throw new Error("Desktop filesystem required.");
+    const normalized = normalizePath(path);
+    await publishDesktopMedia(file, adapter.getBasePath(), normalized, signal);
+    // The filesystem watcher registers the completed file; do not claim success before that.
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const registered = this.getFile(normalized);
+      if (registered) return registered;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    throw new Error("Attachment was written but Vault registration is pending. Check the file before retrying.");
   }
 
   async findByAgentLensKey(folderPath: string, contentKey: string, sourceUrl: string): Promise<VaultFileRef | null> {
