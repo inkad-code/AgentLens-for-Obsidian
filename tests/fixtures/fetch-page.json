@@ -1,0 +1,18 @@
+{
+  "success": true,
+  "data": {
+    "fetchId": "fetch-1",
+    "mode": "single_post",
+    "platform": "youtube",
+    "creator": {"creatorId": "youtube:researcher", "displayName": "Researcher", "handle": "researcher"},
+    "content": [{
+      "contentId": "video-42",
+      "source": {"sourceUrl": "https://youtube.com/watch?v=video-42", "publishedAt": "2026-08-20T00:00:00Z"},
+      "text": {"title": "Source title", "summary": "Summary"},
+      "media": []
+    }],
+    "page": null,
+    "usage": {"charged": true, "units": 1, "remaining": 95}
+  },
+  "requestId": "request-fetch-1"
+}

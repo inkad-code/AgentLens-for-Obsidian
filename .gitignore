@@ -1,0 +1,14 @@
+node_modules/
+main.js
+main.js.map
+releases/
+dist/
+coverage/
+*.log
+.DS_Store
+.test-vault/
+
+.env
+.env.*
+!.env.example
+api-targets.local.json

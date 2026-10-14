@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "data": {
+    "deviceCode": "device-secret-not-persisted",
+    "userCode": "ABCD-EFGH",
+    "verificationUri": "https://agentlensapi.io/device",
+    "verificationUriComplete": "https://agentlensapi.io/device?code=ABCD-EFGH",
+    "expiresIn": 600,
+    "interval": 3
+  },
+  "requestId": "request-device-1"
+}

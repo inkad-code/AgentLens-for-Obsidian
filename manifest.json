@@ -1,0 +1,10 @@
+{
+  "id": "agentlens-social-archiver",
+  "name": "AgentLens for Obsidian",
+  "version": "0.1.0",
+  "minAppVersion": "1.11.4",
+  "description": "Save public social content as traceable Markdown research notes.",
+  "author": "AgentLens",
+  "authorUrl": "https://agentlensapi.io",
+  "isDesktopOnly": false
+}

@@ -1,0 +1,25 @@
+{
+  "success": true,
+  "data": {
+    "creatorId": "creator-1",
+    "fetchRunId": "manual-run-1",
+    "fetchId": "fetch-auto-1",
+    "content": [],
+    "page": {
+      "cursor": null,
+      "hasMore": false,
+      "pageSize": 20,
+      "itemsReturned": 0,
+      "pageNumber": 1,
+      "requestId": "request-auto-1",
+      "chargedUnits": 1,
+      "coverageComplete": true,
+      "truncated": false,
+      "stopReason": "time_baseline"
+    },
+    "schedulerState": "scheduled",
+    "activeJobId": "manual-run-1",
+    "lastRequestId": "request-auto-1"
+  },
+  "requestId": "request-auto-1"
+}

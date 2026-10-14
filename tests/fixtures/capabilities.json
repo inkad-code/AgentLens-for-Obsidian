@@ -1,0 +1,26 @@
+{
+  "success": true,
+  "data": {
+    "accountId": "account-1",
+    "plan": "pro",
+    "quotaRemaining": 96,
+    "minimumPluginVersion": "0.1.0",
+    "latestPluginVersion": "0.1.1",
+    "supportUrl": "https://agentlens.example/support",
+    "releaseNotesUrl": "https://agentlens.example/releases/0.1.1",
+    "platforms": [
+      {
+        "id": "youtube",
+        "label": "YouTube",
+        "single": true,
+        "profile": true,
+        "autoFetch": true,
+        "profileScope": "creator",
+        "mediaDownload": true,
+        "transcript": true,
+        "available": true
+      }
+    ]
+  },
+  "requestId": "request-capabilities-1"
+}

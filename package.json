@@ -1,0 +1,51 @@
+{
+  "name": "agentlens-for-obsidian",
+  "version": "0.1.0",
+  "description": "Save public social content as traceable Markdown research notes in Obsidian.",
+  "main": "main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "node scripts/build.mjs --target=production --profile=single-fetch-review",
+    "build:local": "node scripts/build.mjs --target=local",
+    "build:development": "node scripts/build.mjs --target=development",
+    "lint": "node scripts/lint.mjs",
+    "test": "vitest run",
+    "test:activity-export-verifier": "node scripts/test-activity-export-verifier.mjs",
+    "test:watch": "vitest",
+    "test:host:install": "npm run build:local && npm run package:verify:local && node scripts/install-test-vault.mjs",
+    "test:host:install:development": "npm run build:development && npm run package:verify:development && AGENTLENS_ALLOW_REMOTE_DEV_HOST_TEST=1 node scripts/install-test-vault.mjs --target=development",
+    "check": "npm run lint && npm run test && npm run test:activity-export-verifier && npm run build",
+    "check:development": "npm run lint && npm run test && npm run build:development && npm run package:verify:development",
+    "package:verify": "node scripts/verify-package.mjs",
+    "package:verify:development": "node scripts/verify-package.mjs --target=development",
+    "package:verify:local": "node scripts/verify-package.mjs --target=local",
+    "verify:activity-export": "node scripts/verify-activity-export.mjs",
+    "dev:ui": "node scripts/ui-preview.mjs",
+    "test:ui": "playwright test",
+    "build:review": "node scripts/build.mjs --target=production --profile=single-fetch-review",
+    "package:verify:review": "node scripts/verify-package.mjs --target=production --profile=single-fetch-review",
+    "package:review": "node scripts/package-review.mjs",
+    "build:full": "node scripts/build.mjs --target=production --profile=full"
+  },
+  "dependencies": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@testing-library/jest-dom": "7.0.0",
+    "@testing-library/react": "16.3.2",
+    "@types/node": "22.15.17",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "esbuild": "0.25.5",
+    "jsdom": "29.1.1",
+    "obsidian": "1.13.1",
+    "typescript": "5.8.3",
+    "vitest": "4.1.10"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

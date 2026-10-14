@@ -1,0 +1,28 @@
+{
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "activityId": "11111111-1111-1111-1111-111111111111",
+        "operation": "single_fetch",
+        "platform": "youtube",
+        "targetAlias": "youtube.com",
+        "occurredAt": "2026-08-20T01:00:00Z",
+        "result": "success",
+        "chargedUnits": 1,
+        "extensions": {
+          "obsidian": {
+            "relativeNotePath": "AgentLens/Inbox/source.md",
+            "fileCount": 1,
+            "deleted": false
+          }
+        }
+      }
+    ],
+    "nextCursor": "opaque.cursor.signature",
+    "pageSize": 25,
+    "retentionDays": 90,
+    "retainedFrom": "2026-05-22T00:00:00Z",
+    "through": "2026-08-21T00:00:00Z"
+  }
+}
