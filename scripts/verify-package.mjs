@@ -81,4 +81,4 @@ function inspectDependencies(node) {
 }
 inspectDependencies(bundleAst);
 
-console.log(`Verified AgentLens for Obsidian ${manifest.version} (${target}).`);
+console.log(`Verified AgentLens Social Importer ${manifest.version} (${target}).`);

@@ -42,7 +42,7 @@ function host() {
 function pluginFor(app: unknown): AgentLensPlugin & PluginHarness {
   return new AgentLensPlugin(
     app as App,
-    { id: "agentlens-social-archiver", version: "0.1.0" } as PluginManifest
+    { id: "agentlens-social-importer", version: "0.1.0" } as PluginManifest
   ) as AgentLensPlugin & PluginHarness;
 }
 

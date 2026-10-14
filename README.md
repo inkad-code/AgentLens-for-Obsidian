@@ -1,8 +1,8 @@
-# AgentLens for Obsidian
+# AgentLens Social Importer
 
 Save public social posts, images, videos, and creator content from **TikTok, Instagram, X (Twitter), Facebook, Reddit, Xiaohongshu, and more** directly to your Obsidian vault as Markdown notes, **with the option to download and embed original media files (images and videos)**  -  powered by **[AgentLens API](https://agentlensapi.io)**.
 
-AgentLens for Obsidian uses AgentLens API as its social media content retrieval service. Paste a public social post link or fetch posts from a supported creator profile link, then save the content alongside your research and ideas in Obsidian.
+AgentLens Social Importer uses AgentLens API as its social media content retrieval service. Paste a public social post link or fetch posts from a supported creator profile link, then save the content alongside your research and ideas in Obsidian.
 
 Start with **20 free credits every month** when you register. Ready to make collecting part of your daily routine? Plans start at **just $2.90/month for 300 credits**  -  an average of 10 credits a day for saving useful social posts, collecting inspiration, and building your research library. A small addition to your coffee budget, a month of content collecting. See [Plans and billing](#plans-and-billing) for details.
 
@@ -53,13 +53,13 @@ Single-post and profile bulk support can differ by platform and content type.
 
 Use this method while the plugin is awaiting inclusion in the Obsidian Community plugins directory.
 
-1. Download **`agentlens-social-archiver-0.1.0.zip`** from the [0.1.0 Release](https://github.com/inkad-code/AgentLens-for-Obsidian/releases/tag/0.1.0) and extract it. Use this installation ZIP, not GitHub's automatically generated **Source code (zip)**.
+1. Download **`agentlens-social-importer-0.1.0.zip`** from the [0.1.0 Release](https://github.com/inkad-code/AgentLens-for-Obsidian/releases/tag/0.1.0) and extract it. Use this installation ZIP, not GitHub's automatically generated **Source code (zip)**.
 2. Open the Obsidian vault folder where you want to install the plugin.
-3. Open the hidden folder `<Vault>/.obsidian/plugins/` and create a folder named `agentlens-social-archiver` inside it.
+3. Open the hidden folder `<Vault>/.obsidian/plugins/` and create a folder named `agentlens-social-importer` inside it.
 4. Place `main.js`, `manifest.json`, and `styles.css` directly inside that folder. The final structure must be:
 
    ```text
-   <Vault>/.obsidian/plugins/agentlens-social-archiver/
+   <Vault>/.obsidian/plugins/agentlens-social-importer/
    ├── main.js
    ├── manifest.json
    └── styles.css
@@ -72,7 +72,7 @@ Use this method while the plugin is awaiting inclusion in the Obsidian Community
    `SHA256SUMS` covers the three standalone files and the installation ZIP. On macOS/Linux, run `shasum -a 256 -c SHA256SUMS` with all four files in the same directory to verify their integrity.
 
 5. Restart Obsidian, or run **Reload app without saving** from the command palette after saving your work.
-6. Open **Settings → Community plugins** and enable **AgentLens for Obsidian**. If Obsidian displays a community plugin trust prompt, review and confirm it yourself.
+6. Open **Settings → Community plugins** and enable **AgentLens Social Importer**. If Obsidian displays a community plugin trust prompt, review and confirm it yourself.
 7. Click the AgentLens download icon in the left ribbon, or run **AgentLens: Open panel** from the command palette.
 8. Click **Log in / Start Free** and sign in to your account, or register with your email address or Google account.
 
@@ -243,4 +243,8 @@ Copyright (c) 2026 Wiphox, LLC. Released under the [MIT License](LICENSE).
 
 
 
-AgentLens for Obsidian is a third-party plugin and is not an official Obsidian product.
+AgentLens Social Importer is a third-party plugin and is not an official Obsidian product.
+
+### Upgrading from the earlier 0.1.0 build
+
+The plugin ID changed from `agentlens-social-archiver` to `agentlens-social-importer`. Close Obsidian, back up the old plugin folder, and rename it to `agentlens-social-importer` before replacing the three plugin files. Keep `data.json` to preserve settings, then restart Obsidian and enable the renamed plugin. Do not leave both copies enabled. Existing saved notes remain in place.

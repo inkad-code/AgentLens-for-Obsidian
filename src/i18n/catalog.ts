@@ -23,7 +23,7 @@ const english = {
   "nav.activity": "Activity",
   "nav.settings": "Settings",
   "update.required.title": "Update required",
-  "update.required.body": "Update AgentLens for Obsidian to version {version} or newer to continue online actions.",
+  "update.required.body": "Update AgentLens Social Importer to version {version} or newer to continue online actions.",
   "update.available.title": "Update available",
   "update.available.body": "Version {version} is available. Update when you’re ready.",
   "update.releaseNotes": "Release notes",

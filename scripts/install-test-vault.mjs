@@ -6,7 +6,7 @@ import { apiBaseFor, apiTargets } from "./api-targets.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const vault = path.join(root, ".test-vault");
 const obsidian = path.join(vault, ".obsidian");
-const pluginId = "agentlens-social-archiver";
+const pluginId = "agentlens-social-importer";
 const plugin = path.join(obsidian, "plugins", pluginId);
 const target = process.argv.find((argument) => argument.startsWith("--target="))?.slice("--target=".length) ?? "local";
 if (target !== "local" && target !== "development") throw new Error(`Unknown host-test target: ${target}.`);

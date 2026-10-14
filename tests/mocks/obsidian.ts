@@ -38,7 +38,7 @@ export class Plugin {
   readonly __intervals: number[] = [];
   private __data: unknown = {};
 
-  constructor(app: any = {}, manifest: any = { id: "agentlens-social-archiver", version: "0.1.0" }) {
+  constructor(app: any = {}, manifest: any = { id: "agentlens-social-importer", version: "0.1.0" }) {
     this.app = app;
     this.manifest = manifest;
   }

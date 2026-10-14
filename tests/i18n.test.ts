@@ -14,6 +14,6 @@ describe("AgentLens localization", () => {
       .toBe("需要 0.2.0 或更高版本才能执行在线操作。");
     expect(translate("zh-TW", "activity.creatorSettings")).toBe("Creator settings changed");
     expect(translate("fr-FR", "update.required.body", { version: "0.2.0" }))
-      .toBe("Update AgentLens for Obsidian to version 0.2.0 or newer to continue online actions.");
+      .toBe("Update AgentLens Social Importer to version 0.2.0 or newer to continue online actions.");
   });
 });

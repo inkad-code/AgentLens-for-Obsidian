@@ -23,7 +23,7 @@ function harness(PluginClass = AgentLensPlugin) {
   const plugin = new PluginClass({
     secretStorage: { getSecret: () => "", setSecret: vi.fn() },
     workspace: { onLayoutReady }, vault: {}, fileManager: {}
-  } as unknown as obsidian.App, { id: "agentlens-social-archiver", version: "0.1.0" } as obsidian.PluginManifest);
+  } as unknown as obsidian.App, { id: "agentlens-social-importer", version: "0.1.0" } as obsidian.PluginManifest);
   return { plugin, onLayoutReady };
 }
 

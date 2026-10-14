@@ -229,7 +229,7 @@ describe("WorkbenchApp", () => {
     render(<WorkbenchApp service={service} />);
 
     const notice = await screen.findByRole("alert", { name: "Update required" });
-    expect(notice).toHaveTextContent("Update AgentLens for Obsidian to version 0.2.0 or newer");
+    expect(notice).toHaveTextContent("Update AgentLens Social Importer to version 0.2.0 or newer");
     expect(within(notice).queryByRole("button", { name: /Dismiss/ })).not.toBeInTheDocument();
   });
 
@@ -1064,7 +1064,7 @@ describe("WorkbenchApp", () => {
     });
     render(<WorkbenchApp service={service} />);
 
-    expect(await screen.findByText(/Update AgentLens for Obsidian to version 0.2.0 or newer/i)).toBeVisible();
+    expect(await screen.findByText(/Update AgentLens Social Importer to version 0.2.0 or newer/i)).toBeVisible();
     expect(screen.getByRole("button", { name: "Fetch preview" })).toBeDisabled();
     fireEvent.click(await screen.findByRole("button", { name: "Account menu" }));
     expect(screen.getByRole("button", { name: "Billing & Usage" })).toBeVisible();
