@@ -16,7 +16,7 @@ Start with **20 free credits every month** when you register. Ready to make coll
 - **Easy-to-find note names:** saved notes follow `platform_creator_date_title-or-first-caption-line.md`, making sources easier to identify in your vault.
 - **Source properties and tags:** preserve the platform, creator name and profile link, original source URL, publication and fetch times, and media details as note properties. Platform and creator tags help you search, filter, and organize your collection while keeping every note traceable to its source.
 
-The v0.1.0 interface is available in English and supports the light theme.
+The v0.1.1 interface is available in English and supports the light theme.
 
 
 
@@ -53,7 +53,7 @@ Single-post and profile bulk support can differ by platform and content type.
 
 Use this method while the plugin is awaiting inclusion in the Obsidian Community plugins directory.
 
-1. Download `agentlens-social-importer-0.1.0.zip` from this repository's **Releases** page and extract it. GitHub's automatic Source code ZIP is not an installation package.
+1. Download `agentlens-social-importer-0.1.1.zip` from this repository's **Releases** page and extract it. GitHub's automatic Source code ZIP is not an installation package.
 2. Open the Obsidian vault folder where you want to install the plugin.
 3. Open the hidden folder `<Vault>/.obsidian/plugins/` and create a folder named `agentlens-social-importer` inside it.
 4. Place `main.js`, `manifest.json`, and `styles.css` directly inside that folder. The final structure must be:

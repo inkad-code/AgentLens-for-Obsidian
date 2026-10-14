@@ -1,6 +1,6 @@
 {
   "name": "agentlens-for-obsidian",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Save public social content as traceable Markdown research notes in Obsidian.",
   "main": "main.js",
   "type": "module",

@@ -36,7 +36,7 @@ if (!bundle.startsWith(`/* AgentLens release profile: ${profile} */`)) {
   throw new Error("Bundle release profile does not match the requested package.");
 }
 if (profile === "single-fetch-review") {
-  if (target !== "production" || manifest.version !== "0.1.0") throw new Error("Review package must be production 0.1.0.");
+  if (target !== "production" || manifest.version !== "0.1.1") throw new Error("Review package must be production 0.1.1.");
   if (!bundle.includes("bulk-fetch-creator")) throw new Error("Review bundle is missing Bulk Fetch.");
   for (const command of ["add-creator-auto-fetch", "sync-due-creators", "Default Auto-Fetch frequency"]) {
     if (bundle.includes(command)) throw new Error(`Review bundle includes disabled entrypoint: ${command}`);

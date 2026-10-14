@@ -17,7 +17,7 @@ const files = ["main.js", "manifest.json", "styles.css"];
 const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 const sha = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
 const dirty = execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { cwd: root, encoding: "utf8" }).trim().length > 0;
-const name = `agentlens-social-importer-0.1.0-production-single-fetch-review-${stamp}-${sha}${dirty ? "-dirty" : ""}`;
+const name = `agentlens-social-importer-0.1.1-production-single-fetch-review-${stamp}-${sha}${dirty ? "-dirty" : ""}`;
 await mkdir(join(root, "releases"), { recursive: true });
 const archive = join(root, "releases", `${name}.zip`);
 const temporary = await mkdtemp(join(tmpdir(), "agentlens-review-"));
