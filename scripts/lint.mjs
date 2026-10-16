@@ -15,6 +15,8 @@ for (const file of sourceFiles.filter((path) => [".ts", ".tsx"].includes(extname
 }
 
 const css = await readFile("styles.css", "utf8");
+check("styles.css", css, /!important\b/, "Use scoped selector specificity instead of important declarations.");
+check("styles.css", css, /:has\s*\(/, "Use explicit component state classes instead of relational selectors.");
 // Exact Figma colors belong in shared design-token declarations, never component rules.
 const componentCss = css.replace(/^\s*--agentlens-color-[a-z-]+:\s*#[0-9a-fA-F]{3,8};\s*$/gm, "");
 check("styles.css", componentCss, /#[0-9a-fA-F]{3,8}\b|\brgba?\s*\(/, "Use shared AgentLens design tokens or Obsidian theme variables instead of component-local colors.");

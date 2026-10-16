@@ -166,7 +166,7 @@ function WorkbenchContent({ initialTab = "single", initialUrl, service, onOpenNo
           <button type="button" aria-pressed={activeTab !== "auto" && view !== "activity"} onClick={() => { setView("workflows"); setBulkNavigationVersion(value => value + 1); requestTab("single"); }}>{t("nav.single")}</button>
           <button type="button" id={`${panelId}-tab-auto`} aria-pressed={activeTab === "auto" && view !== "activity"} onClick={() => { setView("workflows"); requestTab("auto"); }}>{t("nav.auto")}</button>
         </nav>}
-        <div className="agentlens-account-summary" aria-label="Account status">
+        <div className={`agentlens-account-summary${authState.status !== "signed_in" && !(authState.status === "error" && authState.reason === "refresh_unavailable") ? " has-sign-in" : ""}`} aria-label="Account status">
           {authState.status === "signed_in" ? <button type="button" ref={accountTrigger} className="agentlens-account-trigger" aria-label="Account menu" aria-expanded={accountOpen} aria-controls={`${panelId}-account`} onClick={event => { focusAccountOnOpen.current = event.detail === 0; setAccountOpen(!accountOpen); }} onKeyDown={event => {if (event.key === 'ArrowDown') {event.preventDefault(); if (accountOpen) focusFirstAccountAction(); else {focusAccountOnOpen.current = true; setAccountOpen(true);}}}}>
             <strong>{authRestoring ? "Restoring…" : account?.user.name ?? "Account"}</strong><span> · {capabilities?.plan ?? "Connected"} · {account ? `${account.subscription.remainingQuota}/${account.subscription.totalQuota}` : capabilities?.quotaRemaining ?? "—"}</span>
           </button> : <>
