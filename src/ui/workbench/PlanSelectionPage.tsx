@@ -48,7 +48,7 @@ export function PlanSelectionPage({ currentPlan, onBack, billing, onAccountChang
   const renewalDate = new Date();
   if (selection.billingCycle === "yearly") renewalDate.setFullYear(renewalDate.getFullYear() + 1);
   else renewalDate.setMonth(renewalDate.getMonth() + 1);
-  const actionDescription = action === "schedule-change" ? `Your current ${currentPlanLabel} plan stays active until ${termDate}.` : action === "upgrade" ? "Your new plan starts after payment and the plan change are confirmed." : action === "current" ? "This is already your current plan." : action === "scheduled" ? "This plan change is already scheduled." : "Stripe checkout opens when you click Credit Card Payment.";
+  const actionDescription = action === "schedule-change" ? `Your current ${currentPlanLabel} plan stays active until ${termDate}.` : action === "upgrade" ? "Your new plan starts after payment and the plan change are confirmed." : action === "current" ? "This is already your current plan." : action === "scheduled" ? "This plan change is already scheduled." : "Stripe checkout opens when you click Check Out.";
 
   function indicator(id: string) {
     return <span className="agentlens-pricing-indicator" aria-hidden="true"><img src={selected === id ? billingAssets.selectedCircle : billingAssets.circle} width="20" height="20" alt="" />{selected === id && <span>✓</span>}</span>;
@@ -89,7 +89,7 @@ export function PlanSelectionPage({ currentPlan, onBack, billing, onAccountChang
       {payment.error && !confirmation && !pendingDialog && <p className="agentlens-parse-error" role="alert">{payment.error}</p>}
       {payment.notice && !pendingDialog && <p role="status">{payment.notice}</p>}
       {payment.pending && !pendingDialog && !payment.busy && <button type="button" onClick={event => { purchaseTrigger.current = event.currentTarget; payment.showPending(); }}>View pending payment</button>}
-      <div className="agentlens-pricing-payments agentlens-pricing-continue"><button type="button" disabled={!canContinue} onClick={event => { purchaseTrigger.current = event.currentTarget; void payment.prepare(selection); }}>{payment.busy ? "Loading…" : "Credit Card Payment"}</button></div>
+      <div className="agentlens-pricing-payments agentlens-pricing-continue"><button type="button" disabled={!canContinue} onClick={event => { purchaseTrigger.current = event.currentTarget; void payment.prepare(selection); }}>{payment.busy ? "Loading…" : "Check Out"}</button></div>
       {payment.success && <WorkbenchDialog title={payment.success === "addon" ? "Your recharge has been successful" : "Payment successful"} textClose closeOnBackdrop className="agentlens-pricing-checkout-dialog agentlens-billing-result-dialog agentlens-billing-success-dialog" onClose={cancel}>
         <span className="agentlens-billing-success-icon" aria-hidden="true"><FeedbackIcon name="check" /></span>
         <footer className="agentlens-pricing-checkout-actions"><button type="button" onClick={cancel}>Back</button></footer>

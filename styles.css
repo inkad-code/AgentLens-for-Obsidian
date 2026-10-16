@@ -2425,8 +2425,8 @@ button:disabled > .agentlens-action-state-icon { background-image: var(--action-
 .agentlens-import-shell :is(.agentlens-single-pane, .agentlens-bulk-pane) .agentlens-preview-card.is-empty { flex: 1 0 auto; min-height: 400px; padding: 40px 12px; align-content: center; }
 .agentlens-import-shell .agentlens-onboarding { flex: 1 1 auto; min-height: auto; align-content: center; margin-bottom: 16px; }
 /* Keep the SVG tab curve at its original scale; extend only the surface below it. */
-.agentlens-import-shell:is(.is-single, .is-bulk)::before { bottom: auto; height: 80px; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
-.agentlens-import-shell:is(.is-single, .is-bulk)::after { content: ''; position: absolute; inset: 80px 0 0; z-index: -1; pointer-events: none; border-radius: 0 0 20px 20px; background: linear-gradient(180deg, var(--agentlens-color-surface), var(--agentlens-color-demo-surface)); }
+.agentlens-import-shell:is(.is-single, .is-bulk):not(.is-save-view)::before { bottom: auto; height: 80px; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.agentlens-import-shell:is(.is-single, .is-bulk):not(.is-save-view)::after { content: ''; position: absolute; inset: 80px 0 0; z-index: -1; pointer-events: none; border-radius: 0 0 20px 20px; background: linear-gradient(180deg, var(--agentlens-color-surface), var(--agentlens-color-demo-surface)); }
 @media (max-width: 640px) {
   .agentlens-workbench__body { padding-bottom: 12px; }
 }

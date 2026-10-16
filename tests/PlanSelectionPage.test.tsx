@@ -25,15 +25,15 @@ describe("PlanSelectionPage", () => {
     render(<PlanSelectionPage currentPlan="Mega" onBack={vi.fn()} billing={billing} />);
     await waitFor(() => expect(screen.getByRole("button", { name: "Select Add-on Packs" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Select Add-on Packs" }));
-    fireEvent.click(screen.getByRole("button", { name: "Credit Card Payment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Check Out" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Check payment status" })).toBeEnabled());
-    expect(screen.getByRole("button", { name: "Credit Card Payment" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check Out" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
     fireEvent(screen.getByRole("dialog"), new Event("cancel", { cancelable: true }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByRole("combobox")).toBeEnabled();
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "600" } });
-    fireEvent.click(screen.getByRole("button", { name: "Credit Card Payment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Check Out" }));
     await waitFor(() => expect(billing.createIntent).toHaveBeenCalledTimes(2));
     expect(billing.createIntent).toHaveBeenLastCalledWith({ itemType: "addon", addonCredits: 600 });
   });
@@ -41,14 +41,14 @@ describe("PlanSelectionPage", () => {
     const billing = billingFixture({ ...dashboard, plan: "pro" });
     vi.spyOn(window, "open").mockReturnValue({ opener: null, closed: false, location: { replace: vi.fn() }, close: vi.fn() } as unknown as Window);
     render(<PlanSelectionPage currentPlan="Pro" onBack={vi.fn()} billing={billing} />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Credit Card Payment" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Credit Card Payment" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Check Out" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Check Out" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Check payment status" })).toBeEnabled());
     fireEvent(screen.getByRole("dialog"), new Event("cancel", { cancelable: true }));
     vi.mocked(billing.dashboard).mockResolvedValue({ ...dashboard, plan: "pro", checkoutStatus: "payment_pending" });
     vi.mocked(billing.change).mockRejectedValue(new AgentLensError("unknown", "An upgrade payment is already pending", false, 409, undefined, undefined, undefined, "PAYMENT_PENDING"));
     fireEvent.click(screen.getByRole("button", { name: "Select Mega" }));
-    fireEvent.click(screen.getByRole("button", { name: "Credit Card Payment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Check Out" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("An upgrade payment is already pending");
     expect(screen.getByRole("alert")).toHaveClass("agentlens-parse-error");
     expect(billing.change).toHaveBeenLastCalledWith("upgrade", "mega", "monthly");
@@ -60,11 +60,11 @@ describe("PlanSelectionPage", () => {
     const refresh = vi.fn();
     vi.spyOn(window, "open").mockReturnValue({ opener: null, closed: false, location: { replace: vi.fn() }, close: vi.fn() } as unknown as Window);
     render(<PlanSelectionPage currentPlan="Basic" onBack={vi.fn()} billing={billing} onAccountChanged={refresh} />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Credit Card Payment" })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Check Out" })).toBeEnabled());
     fireEvent.focus(window);
     await new Promise(resolve => setTimeout(resolve, 300));
     expect(billing.intent).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Credit Card Payment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Check Out" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Check payment status" })).toBeEnabled());
     vi.mocked(billing.intent).mockResolvedValue({ id: "intent-1", displayedAmount: 8, currency: "USD", checkoutStatus: "paid" });
     vi.mocked(billing.dashboard).mockResolvedValue({ ...dashboard, plan: "ultra" });
@@ -82,8 +82,8 @@ describe("PlanSelectionPage", () => {
     const billing = billingFixture();
     vi.spyOn(window, "open").mockReturnValue({ opener: null, closed: false, location: { replace: vi.fn() }, close: vi.fn() } as unknown as Window);
     const view = render(<PlanSelectionPage currentPlan="Basic" onBack={vi.fn()} billing={billing} />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Credit Card Payment" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Credit Card Payment" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Check Out" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Check Out" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Check payment status" })).toBeEnabled());
     vi.mocked(billing.intent).mockRejectedValue(new Error("Status unavailable"));
     fireEvent.focus(window);
@@ -107,8 +107,8 @@ describe("PlanSelectionPage", () => {
     vi.stubGlobal("require", (name: string) => name === "electron" ? { shell: { openExternal } } : undefined);
     try {
       render(<PlanSelectionPage currentPlan="Basic" onBack={vi.fn()} billing={billing} />);
-      await waitFor(() => expect(screen.getByRole("button", { name: "Credit Card Payment" })).toBeEnabled());
-      fireEvent.click(screen.getByRole("button", { name: "Credit Card Payment" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Check Out" })).toBeEnabled());
+      fireEvent.click(screen.getByRole("button", { name: "Check Out" }));
       await waitFor(() => expect(billing.checkout).toHaveBeenCalledTimes(1));
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Loading…" })).toBeDisabled();
@@ -126,8 +126,8 @@ describe("PlanSelectionPage", () => {
     vi.stubGlobal("require", (name: string) => name === "electron" ? { shell: { openExternal } } : undefined);
     try {
       render(<PlanSelectionPage currentPlan="Basic" onBack={vi.fn()} billing={billing} />);
-      await waitFor(() => expect(screen.getByRole("button", { name: "Credit Card Payment" })).toBeEnabled());
-      fireEvent.click(screen.getByRole("button", { name: "Credit Card Payment" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Check Out" })).toBeEnabled());
+      fireEvent.click(screen.getByRole("button", { name: "Check Out" }));
       expect(await screen.findByRole("alert")).toHaveTextContent("Browser unavailable");
       expect(screen.getByRole("alert")).toHaveClass("agentlens-parse-error");
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -144,7 +144,7 @@ describe("PlanSelectionPage", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Select Ultra" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: /Annual/ }));
     expect(screen.getByText(/The credit for unused subscription time/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Credit Card Payment" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Check Out" })).toBeDisabled();
     expect(billing.checkout).not.toHaveBeenCalled();
     expect(billing.change).not.toHaveBeenCalled();
   });
@@ -153,7 +153,7 @@ describe("PlanSelectionPage", () => {
     const refresh = vi.fn();
     vi.spyOn(window, "open").mockReturnValue({ opener: null, closed: false, location: { replace: vi.fn() }, close: vi.fn() } as unknown as Window);
     render(<PlanSelectionPage currentPlan="Basic" onBack={vi.fn()} billing={billing} onAccountChanged={refresh} />);
-    const card = await screen.findByRole("button", { name: "Credit Card Payment" });
+    const card = await screen.findByRole("button", { name: "Check Out" });
     await waitFor(() => expect(card).toBeEnabled());
     expect(screen.getByText("Ultra — $8.00/month")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Select Ultra" }));
@@ -193,7 +193,7 @@ describe("PlanSelectionPage", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Select Ultra" })).toBeEnabled());
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "600" } });
     fireEvent.click(screen.getByRole("button", { name: "Select Add-on Packs" }));
-    fireEvent.click(screen.getByRole("button", { name: "Credit Card Payment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Check Out" }));
     await screen.findByText("Connection lost");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "View pending payment" }));
@@ -212,8 +212,8 @@ describe("PlanSelectionPage", () => {
     const billing = billingFixture({ ...dashboard, plan: "pro" });
     const open = vi.spyOn(window, "open").mockReturnValue({ opener: null, closed: false, location: { replace: vi.fn() }, close: vi.fn() } as unknown as Window);
     render(<PlanSelectionPage currentPlan="Pro" onBack={vi.fn()} billing={billing} />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Credit Card Payment" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Credit Card Payment" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Check Out" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Check Out" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Reopen checkout" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Reopen checkout" }));
     await waitFor(() => expect(open).toHaveBeenLastCalledWith("https://invoice.stripe.com/pay", "_blank", "noopener,noreferrer"));
@@ -234,8 +234,8 @@ describe("PlanSelectionPage", () => {
     const billing = billingFixture();
     vi.spyOn(window, "open").mockReturnValue({ opener: null, closed: false, location: { replace: vi.fn() }, close: vi.fn() } as unknown as Window);
     render(<PlanSelectionPage currentPlan="Basic" onBack={vi.fn()} billing={billing} />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Credit Card Payment" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Credit Card Payment" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Check Out" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Check Out" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Check payment status" })).toBeEnabled());
     vi.mocked(billing.intent).mockRejectedValue(new Error("Status unavailable"));
     fireEvent.click(screen.getByRole("button", { name: "Check payment status" }));
@@ -251,7 +251,7 @@ describe("PlanSelectionPage", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Select Ultra" })).toBeEnabled());
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "600" } });
     fireEvent.click(screen.getByRole("button", { name: "Select Add-on Packs" }));
-    fireEvent.click(screen.getByRole("button", { name: "Credit Card Payment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Check Out" }));
     await screen.findByRole("dialog");
     await waitFor(() => expect(screen.getByRole("button", { name: "Check payment status" })).toBeEnabled());
     first.unmount();
@@ -275,7 +275,7 @@ describe("PlanSelectionPage", () => {
     const result = render(<PlanSelectionPage currentPlan="Pro" onBack={vi.fn()} billing={billing} />);
     await waitFor(() => expect(screen.getByRole("button", { name: "Select Ultra" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Select Ultra" }));
-    fireEvent.click(screen.getByRole("button", { name: "Credit Card Payment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Check Out" }));
     await screen.findByRole("dialog");
     await waitFor(() => expect(billing.change).toHaveBeenCalledWith("upgrade", "ultra", "monthly"));
     expect(billing.checkout).not.toHaveBeenCalled();
@@ -284,7 +284,7 @@ describe("PlanSelectionPage", () => {
     render(<PlanSelectionPage currentPlan="Mega" onBack={vi.fn()} billing={second} />);
     await waitFor(() => expect(screen.getByRole("button", { name: "Select Ultra" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Select Ultra" }));
-    fireEvent.click(screen.getByRole("button", { name: "Credit Card Payment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Check Out" }));
     await waitFor(() => expect(second.change).toHaveBeenCalledWith("schedule-change", "ultra", "monthly"));
     expect(second.checkout).not.toHaveBeenCalled();
   });
@@ -304,11 +304,11 @@ describe("PlanSelectionPage", () => {
     const billing = billingFixture({ ...dashboard, plan: "mega" });
     const open = vi.spyOn(window, "open");
     render(<PlanSelectionPage currentPlan="Mega" onBack={vi.fn()} billing={billing} />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Credit Card Payment" })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Check Out" })).toBeEnabled());
     vi.mocked(billing.change).mockResolvedValue({ status: "change_scheduled", invoiceUrl: null, effectiveAt: "2026-11-01" });
     vi.mocked(billing.dashboard).mockResolvedValue({ ...dashboard, plan: "mega", scheduledPlan: "ultra", scheduledBillingCycle: "monthly", scheduledEffectiveAt: "2026-11-01" });
     vi.mocked(billing.dashboard).mockResolvedValueOnce({ ...dashboard, plan: "mega" });
-    fireEvent.click(screen.getByRole("button", { name: "Credit Card Payment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Check Out" }));
     await screen.findByRole("button", { name: "Keep Mega" });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(billing.checkout).not.toHaveBeenCalled();
@@ -319,9 +319,9 @@ describe("PlanSelectionPage", () => {
   it("cancels renewal for Basic and resumes it without a checkout order", async () => {
     const billing = billingFixture({ ...dashboard, plan: "pro" });
     render(<PlanSelectionPage currentPlan="Pro" onBack={vi.fn()} billing={billing} />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Credit Card Payment" })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Check Out" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Select Basic" }));
-    fireEvent.click(screen.getByRole("button", { name: "Credit Card Payment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Check Out" }));
     await screen.findByRole("dialog", { name: "Cancel renewal?" });
     vi.mocked(billing.dashboard).mockResolvedValue({ ...dashboard, plan: "pro", cancelAtPeriodEnd: true });
     fireEvent.click(screen.getByRole("button", { name: "Cancel renewal" }));

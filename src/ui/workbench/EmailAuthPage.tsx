@@ -31,6 +31,8 @@ export function EmailAuthPage({mode,busy,browserPending,browserOpening,browserEr
  const [resetBusy,setResetBusy]=useState(false);
  const registration=mode==='register';
  async function resetPassword() {
+  if(busy || resetBusy)return;
+  setNotice(null);
   if(!email.trim()){setError("Enter your email address first.");return;}
   setResetBusy(true);setError(null);setNotice(null);
   try{await onPasswordReset(email.trim());setNotice("If an account uses this email, you’ll receive a reset link. Check your inbox.");}catch(caught){setError(message(caught,"auth"));}finally{setResetBusy(false);}

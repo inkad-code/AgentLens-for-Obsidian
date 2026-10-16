@@ -6,11 +6,11 @@ test('billing confirmation and payment status work at desktop and mobile widths'
   await page.goto('/?signedIn&reference=account&billingDemo');
   await page.getByRole('button', { name: 'Account menu' }).click();
   await page.getByRole('button', { name: 'Billing & Usage' }).click();
-  await expect(page.getByRole('button', { name: 'Credit Card Payment', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Check Out', exact: true })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Alipay | WeChat Pay', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Select Ultra' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  const paymentButton = page.getByRole('button', { name: 'Credit Card Payment', exact: true });
+  const paymentButton = page.getByRole('button', { name: 'Check Out', exact: true });
   await paymentButton.scrollIntoViewIfNeeded();
   const paymentBox = await paymentButton.boundingBox();
   const paymentColor = await paymentButton.evaluate(element => getComputedStyle(element).backgroundColor);
@@ -20,7 +20,7 @@ test('billing confirmation and payment status work at desktop and mobile widths'
   await paymentButton.click();
   await expect(page.getByRole('dialog', { name: 'Complete your purchase in Stripe' })).toBeVisible();
   await expect(page.getByRole('dialog', { name: 'Continue to checkout?' })).toHaveCount(0);
-  await expect(page.getByRole('dialog').getByRole('button', { name: 'Credit Card Payment', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Check Out', exact: true })).toHaveCount(0);
   await expect(page.getByRole('dialog').getByRole('button')).toHaveCount(2);
   await page.getByRole('dialog').scrollIntoViewIfNeeded();
   await page.screenshot({ path: 'dist/billing-confirm-desktop.png', fullPage: true });
@@ -77,7 +77,7 @@ test('Escape dismisses checkout and clears the local pending payment', async ({ 
   await page.goto('/?signedIn&reference=account&billingDemo');
   await page.getByRole('button', { name: 'Account menu' }).click();
   await page.getByRole('button', { name: 'Billing & Usage' }).click();
-  await page.getByRole('button', { name: 'Credit Card Payment', exact: true }).click();
+  await page.getByRole('button', { name: 'Check Out', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Complete your purchase in Stripe' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
