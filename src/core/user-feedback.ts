@@ -10,6 +10,10 @@ export const feedbackCopy = {
   "planExpired": "Your plan has expired. Review your plan.",
   "credits": "You don’t have enough credits for this action. Review your plan.",
   "link": "Enter a public post or profile link.",
+  "pinterestBoard": "Use a Pinterest board link, not a profile link. Open the board you want and copy its link. For example: https://www.pinterest.com/newformcommunity/dailywebdesign/",
+  "pinterestDuplicate": "You’re already following this board.",
+  "pinterestMismatch": "The provider could not verify the requested Pinterest board. No other board was substituted.",
+  "fetchMode": "This link doesn’t match the selected mode. Use Single post fetch for a post, or Creator profile bulk fetch for a profile.",
   "unsupported": "This type of link isn’t available here. Choose a supported link.",
   "unavailable": "This content is unavailable. Check the original link.",
   "expiredLink": "This download link has expired. Load the post again.",
@@ -62,7 +66,10 @@ const codeKeys: Readonly<Record<string, keyof typeof feedbackCopy>> = {
   "UNSUPPORTED_PLATFORM": "unsupported",
   "PLATFORM_NOT_SUPPORTED": "unsupported",
   "PROFILE_FETCH_NOT_SUPPORTED": "unsupported",
-  "MODE_MISMATCH": "unsupported",
+  "MODE_MISMATCH": "fetchMode",
+  "PINTEREST_BOARD_URL_REQUIRED": "pinterestBoard",
+  "FOLLOW_TARGET_ALREADY_EXISTS": "pinterestDuplicate",
+  "PINTEREST_BOARD_MISMATCH": "pinterestMismatch",
   "PLATFORM_MODE_DISABLED": "unsupported",
   "URL_TYPE_NOT_SUPPORTED": "unsupported",
   "MEDIA_NO_LONGER_AVAILABLE": "unavailable",
@@ -189,6 +196,8 @@ const legacyCopy: Readonly<Record<string, string>> = {
   "Sign in to the original account to retry.": "Sign in to the original account to continue.",
   "Open the original library to update this task.": "Open the original Eagle library to update this task.",
   "This task is no longer available.": "This task is no longer available. Reload the list.",
+  "This task has no failed files to retry.": "This task has no failed files to retry.",
+  "Task history changed. Refresh tasks.": "Task history changed. Refresh tasks.",
   "This parse is still finishing. Retry after its result is available.": "This check is still in progress. Wait for its result.",
   "This task is still confirming its import results. Try again after confirmation finishes.": "Saved files are still being checked. Wait for the result before trying again.",
   "Check the existing Eagle item before retrying this write.": "Check the existing Eagle item before trying to save it again.",
@@ -236,6 +245,8 @@ export function userMessage(error: unknown, context: FeedbackContext = "action")
   const rawCode = data.serverCode ?? data.code;
   const code = typeof rawCode === "string" || typeof rawCode === "number" ? String(rawCode) : "";
   const raw = typeof error === "string" ? error : typeof data.message === "string" ? data.message : "";
+  if (code === "PINTEREST_PIN_IN_BOARD_FLOW") return raw === "To follow Pinterest updates, paste a board link instead of a Pin link."
+    ? raw : "This is a Pin link. Use Single post fetch, or paste a board link to fetch multiple Pins.";
   // Evidence about an unconfirmed operation takes precedence over transport symptoms.
   if (execution.failureClass === "reconciliation_required") return feedbackCopy.unknownResult;
   if (context === "auth" && /invalid (login )?credentials|incorrect (email|password)|email (address )?or password is incorrect/i.test(raw)) return feedbackCopy.password;

@@ -55,6 +55,46 @@ function fixture(total = 105) {
 }
 
 describe("Durable scheduler pagination", () => {
+  it("does not wait for pending writes or callbacks before an independent manual check", async () => {
+    const f = fixture(1);
+    f.operations.flushPendingWrites.mockImplementation(() => new Promise(() => {}));
+    f.operations.flushPendingCallbacks.mockImplementation(() => new Promise(() => {}));
+    await f.restart().runCreatorNow({ ...lease, autoFetchEnabled: false } as unknown as CreatorRecord);
+    expect(f.creatorUpdates).toHaveBeenCalledTimes(1);
+    expect(f.operations.flushPendingWrites).not.toHaveBeenCalled();
+    expect(f.operations.flushPendingCallbacks).not.toHaveBeenCalled();
+  });
+
+  it("rejects an offline manual click without persisting a request for reconnect", async () => {
+    const f = fixture(1);
+    const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    try {
+      await expect(f.restart().runCreatorNow({ ...lease } as unknown as CreatorRecord)).rejects.toThrow("offline");
+      expect(await f.store.schedulerCheckpoints("account")).toEqual([]);
+      expect(f.creatorUpdates).not.toHaveBeenCalled();
+    } finally { online.mockRestore(); }
+  });
+
+  it("persists source pages and parses the next page before a blocked Vault write finishes", async () => {
+    const f = fixture(2);
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    f.operations.planPreview.mockImplementation(async () => { await blocked; throw new Error("stop delivery"); });
+    const original = f.creatorUpdates.getMockImplementation()!;
+    f.creatorUpdates.mockImplementation(async (...args) => ({ ...(await original(...args)), previews: [{
+      platform: "youtube", contentId: "post", canonicalUrl: "https://youtube.com/watch?v=post",
+      author: { id: "author", displayName: "Author" }, text: "Post", media: []
+    }] }));
+    const running = f.restart().runScheduled("service_start");
+    const failure = expect(running).rejects.toThrow("stop delivery");
+    await vi.waitFor(() => expect(f.creatorUpdates).toHaveBeenCalledTimes(2));
+    expect(await f.store.schedulerDeliveries("account")).toHaveLength(2);
+    expect(await f.store.schedulerCheckpoints("account")).toEqual([]);
+    release(); await failure;
+    expect(await f.store.schedulerDeliveries("account")).toHaveLength(2);
+  });
+
+
   it("keeps the legacy manual request identity when recovering an existing first-page checkpoint", async () => {
     const f = fixture(1);
     f.reconcile.mockReset().mockResolvedValue({ serverTime: "now", leases: [] });

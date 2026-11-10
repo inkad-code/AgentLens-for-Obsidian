@@ -1,40 +1,43 @@
+import { transfer, SMALL_FILE_LIMIT, downloadDeadline, assertDownloadSpace, type TransferLease } from "../runtime/TransferPool";
+import type { MediaFingerprint } from "./MediaFingerprint";
+import { MediaDownloadError } from "../core/mediaFailure";
+import { mediaRequestHeaders } from "./mediaRequestHeaders";
+import { withMedia403Recovery, type LoadMediaRecoveryPolicy, type CheckRecoveryTarget } from "../runtime/media403Recovery";
+import type { DownloadProgress } from "../workbench/ImportTasks";
+
 // Desktop-only boundary: Node modules are loaded inside functions, never on mobile startup.
 import type { NormalizedMedia } from "../core/domain";
 import type { DownloadedMediaFile } from "./DownloadedMedia";
 import { DESKTOP_MEDIA_DOWNLOAD_LIMIT } from "../core/platformPolicy";
 
-let active = 0;
-const waiters = new Set<() => void>();
-async function acquire(signal?: AbortSignal): Promise<() => void> {
-  while (active >= 2) {
-    signal?.throwIfAborted();
-    await new Promise<void>((resolve, reject) => {
-      const wake = () => { waiters.delete(wake); signal?.removeEventListener("abort", abort); resolve(); };
-      const abort = () => { waiters.delete(wake); signal?.removeEventListener("abort", abort); reject(new DOMException("Download canceled", "AbortError")); };
-      waiters.add(wake); signal?.addEventListener("abort", abort, { once: true });
-      if (signal?.aborted) abort();
-    });
-  }
-  signal?.throwIfAborted(); active++;
-  return () => { active--; for (const wake of [...waiters]) wake(); };
-}
-
 export class DesktopMediaDownloader {
   readonly refreshOnFailure = false;
+  readonly streaming = true;
+  readonly waitForTransferSlot = desktopIoDelay;
   constructor(private readonly maxBytes = DESKTOP_MEDIA_DOWNLOAD_LIMIT,
     private readonly timeoutMs = 10 * 60_000, private readonly idleMs = 60_000,
-    private readonly resolveProxy: (url: string) => Promise<string> = resolveDesktopProxy) {}
+    private readonly resolveProxy: (url: string) => Promise<string> = resolveDesktopProxy,
+    private readonly loadRecoveryPolicy?: LoadMediaRecoveryPolicy) {}
 
-  async download(media: NormalizedMedia, signal?: AbortSignal): Promise<DownloadedMediaFile> {
+  async download(media: NormalizedMedia, signal?: AbortSignal, onProgress?: (progress: DownloadProgress) => void, lease?: TransferLease): Promise<DownloadedMediaFile> {
+    if (!lease) return transfer("obsidian", acquired => this.download(media, signal, onProgress, acquired), signal, {
+      sizeBytes: media.sizeBytes, waitForSlot: this.waitForTransferSlot
+    });
+    return withMedia403Recovery(media, (candidate, checkTarget) => this.downloadOnce(candidate, signal, onProgress, lease, checkTarget),
+      this.loadRecoveryPolicy, signal);
+  }
+
+  private async downloadOnce(media: NormalizedMedia, signal: AbortSignal | undefined,
+    onProgress: ((progress: DownloadProgress) => void) | undefined, lease: TransferLease,
+    checkTarget?: CheckRecoveryTarget): Promise<DownloadedMediaFile> {
     signal?.throwIfAborted();
     if (media.sizeBytes !== undefined && media.sizeBytes > this.maxBytes) throw new Error("Media exceeds the desktop download limit (5 GiB).");
-    const release = await acquire(signal);
     const controller = new AbortController();
     const abort = () => controller.abort(signal?.reason);
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) abort();
     const timers = await import("node:timers");
-    const timeout = timers.setTimeout(() => controller.abort(new Error("Media download timed out.")), this.timeoutMs);
+    let timeout = timers.setTimeout(() => controller.abort(new Error("Media download timed out.")), downloadDeadline(media.sizeBytes, this.timeoutMs));
     let directory: string | undefined;
     try {
       const fs = await import("node:fs/promises");
@@ -42,7 +45,7 @@ export class DesktopMediaDownloader {
       const path = await import("node:path");
       directory = await fs.mkdtemp(path.join(os.tmpdir(), "agentlens-obsidian-media-"));
       const destination = path.join(directory, "media.part");
-      const response = await openMedia(media.sourceUrl, media.downloadHeaders ?? {}, controller.signal, this.idleMs, this.resolveProxy);
+      const response = await openMedia(media.sourceUrl, mediaRequestHeaders(media), controller.signal, this.idleMs, this.resolveProxy, 0, checkTarget);
       const type = (response.headers["content-type"] ?? "").split(";", 1)[0]!.trim().toLowerCase();
       const encoding = response.headers["content-encoding"];
       const declared = response.headers["content-length"];
@@ -55,7 +58,15 @@ export class DesktopMediaDownloader {
         response.destroy();
         throw new Error(total !== undefined && total > this.maxBytes ? "Media exceeds the desktop download limit (5 GiB)." : "Media response is not a supported media file.");
       }
+      try {
+        timers.clearTimeout(timeout);
+        timeout = timers.setTimeout(() => controller.abort(new Error("Media download timed out.")), downloadDeadline(total, this.timeoutMs));
+        if (fs.statfs) assertDownloadSpace(await fs.statfs(directory), total);
+        await lease.updateSize(total, controller.signal);
+      } catch (error) { response.destroy(); throw error; }
+      onProgress?.({ receivedBytes: 0, totalBytes: total });
       const file = await fs.open(destination, "wx").catch(error => { response.destroy(); throw error; });
+      const hash = (await import("node:crypto")).createHash("sha256");
       let received = 0;
       const prefix = new Uint8Array(512); let prefixLength = 0;
       try {
@@ -63,6 +74,10 @@ export class DesktopMediaDownloader {
           controller.signal.throwIfAborted();
           const chunk = value as Uint8Array;
           received += chunk.byteLength;
+          if (received >= SMALL_FILE_LIMIT && received - chunk.byteLength < SMALL_FILE_LIMIT) await lease.updateSize(received, controller.signal);
+          hash.update(chunk);
+          onProgress?.({ receivedBytes: received, totalBytes: total });
+
           if (received > this.maxBytes) throw new Error("Media exceeds the desktop download limit (5 GiB).");
           if (prefixLength < prefix.length) {
             const part = chunk.subarray(0, prefix.length - prefixLength);
@@ -82,7 +97,7 @@ export class DesktopMediaDownloader {
         await file.sync();
       } finally { response.destroy(); await file.close(); }
       const ownedDirectory = directory;
-      return { kind: "file", path: destination, sizeBytes: received,
+      return { kind: "file", path: destination, sizeBytes: received, sha256: hash.digest("hex"),
         cleanup: () => fs.rm(ownedDirectory, { recursive: true, force: true }) };
     } catch (error) {
       if (directory) {
@@ -92,13 +107,32 @@ export class DesktopMediaDownloader {
       if (signal?.aborted) throw new DOMException("Media download canceled.", "AbortError");
       if (controller.signal.aborted) throw new Error("Media download timed out.");
       throw error;
-    } finally { timers.clearTimeout(timeout); signal?.removeEventListener("abort", abort); release(); }
+    } finally { timers.clearTimeout(timeout); signal?.removeEventListener("abort", abort);  }
   }
 }
 
+/** Desktop I/O waits must keep running when Chromium throttles background timers. */
+export async function desktopIoDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  const timers = await import("node:timers");
+  signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const timer = timers.setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }, milliseconds);
+    const abort = () => {
+      timers.clearTimeout(timer);
+      reject(new DOMException("Transfer canceled", "AbortError"));
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
 async function openMedia(rawUrl: string, suppliedHeaders: Readonly<Record<string, string>>, signal: AbortSignal,
-  idleMs: number, resolveProxy: (url: string) => Promise<string>, redirects = 0): Promise<import("node:http").IncomingMessage> {
+  idleMs: number, resolveProxy: (url: string) => Promise<string>, redirects = 0,
+  checkTarget?: CheckRecoveryTarget): Promise<import("node:http").IncomingMessage> {
   signal.throwIfAborted();
+  checkTarget?.(rawUrl);
   const url = new URL(rawUrl);
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("Invalid media URL.");
   const transport = await (url.protocol === "https:" ? import("node:https") : import("node:http"));
@@ -120,10 +154,10 @@ async function openMedia(rawUrl: string, suppliedHeaders: Readonly<Record<string
     const next = new URL(response.headers.location, url);
     if (url.protocol === "https:" && next.protocol !== "https:") throw new Error("Unsafe media redirect.");
     if (next.origin !== url.origin) for (const key of Object.keys(headers)) if (/^(authorization|cookie|proxy-authorization)$/i.test(key)) delete headers[key];
-    return openMedia(next.href, headers, signal, idleMs, resolveProxy, redirects + 1);
+    return openMedia(next.href, headers, signal, idleMs, resolveProxy, redirects + 1, checkTarget);
   }
   if ((response.statusCode ?? 0) < 200 || (response.statusCode ?? 0) >= 300) {
-    response.destroy(); throw new Error(`Media download failed with HTTP ${response.statusCode}.`);
+    response.destroy(); throw MediaDownloadError.http(response.statusCode ?? 0, url.href);
   }
   return response;
 }
@@ -191,4 +225,45 @@ async function desktopProxyAgent(url: URL, resolver: (url: string) => Promise<st
   }
   const { HttpProxyAgent } = await import("http-proxy-agent");
   return new HttpProxyAgent(endpoint);
+}
+
+/** Bounded, read-only verification of a registered attachment within the original Vault. */
+export async function fingerprintDesktopMedia(basePath: string, relativePath: string): Promise<MediaFingerprint | undefined> {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const constants = (await import("node:fs")).constants;
+  const root = await fs.realpath(basePath), target = path.resolve(root, relativePath);
+  if (!target.startsWith(root + path.sep)) throw new Error("Attachment path is outside this Vault.");
+  try {
+    const real = await fs.realpath(target);
+    if (real !== target || !real.startsWith(root + path.sep)) return undefined;
+    const file = await fs.open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const before = await file.stat();
+      if (!before.isFile() || before.size > DESKTOP_MEDIA_DOWNLOAD_LIMIT) return undefined;
+      const hash = (await import("node:crypto")).createHash("sha256");
+      const chunk = new Uint8Array(256 * 1024);
+      let sizeBytes = 0;
+      for (;;) {
+        const { bytesRead } = await file.read(chunk, 0, chunk.length, null);
+        if (!bytesRead) break;
+        sizeBytes += bytesRead;
+        if (sizeBytes > before.size) return undefined;
+        hash.update(chunk.subarray(0, bytesRead));
+      }
+      const after = await file.stat();
+      // Windows can report different device IDs for path stat and handle stat.
+      // Reopen the path so both file identities come from the same API.
+      const currentFile = await fs.open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+      try {
+        const current = await currentFile.stat();
+        if (sizeBytes !== before.size || before.size !== after.size || before.mtimeMs !== after.mtimeMs
+            || before.ctimeMs !== after.ctimeMs || current.ino !== after.ino || current.dev !== after.dev) return undefined;
+        return { sizeBytes, sha256: hash.digest("hex") };
+      } finally { await currentFile.close(); }
+    } finally { await file.close(); }
+  } catch (error) {
+    if ((error as { code?: string }).code === "ENOENT") return undefined;
+    throw error;
+  }
 }

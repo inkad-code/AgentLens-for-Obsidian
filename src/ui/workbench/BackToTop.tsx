@@ -1,10 +1,11 @@
 import { useHostWindow } from "./HostDocument";
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
+import taskTop from "./assets/tasks/top.svg";
 
 const REVEAL_AFTER_PX = 320;
 
-export function BackToTop() {
+export function BackToTop({ variant }: { variant?: "tasks" } = {}) {
   const window = useHostWindow();
   const { t } = useI18n();
   const anchorRef = useRef<HTMLSpanElement>(null);
@@ -37,8 +38,7 @@ export function BackToTop() {
 
   return <span ref={anchorRef} className="agentlens-back-to-top-anchor">
     {visible && <button type="button" className="agentlens-back-to-top" aria-label={t("backToTop")} onClick={returnToTop}>
-      <span aria-hidden="true">↑</span>
-      <span>{t("backToTop")}</span>
+      {variant === "tasks" ? <img src={taskTop} alt="" /> : <><span aria-hidden="true">↑</span><span>{t("backToTop")}</span></>}
     </button>}
   </span>;
 }

@@ -1,3 +1,10 @@
+export interface OperationPlan {
+  configRevision: number;
+  slotIndex?: number | undefined;
+  recoveryFrom?: string | undefined;
+  recoveryThrough?: string | undefined;
+}
+
 export interface ScheduleRevision {
   revision: number;
   effectiveAt: string;

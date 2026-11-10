@@ -12,6 +12,17 @@ describe("ObsidianRequestUrlTransport", () => {
 
   beforeEach(() => send.mockReset());
 
+  it.each([120, -1, 0, 1.5, "120"])("preserves only valid supplement cooldown seconds (%s)", async seconds => {
+    send.mockResolvedValue(response(429, JSON.stringify({ error: { code: "SUPPLEMENT_RETRY_COOLDOWN",
+      message: "Please wait before retrying.", details: { retryAfterSeconds: seconds } }, requestId: "supplement-retry" })));
+    const transport = new ObsidianRequestUrlTransport("https://api.agentlens.example", send);
+    await expect(transport.request({ path: "/v1/plugins/content/supplement", method: "POST" })).rejects.toMatchObject({
+      serverCode: "SUPPLEMENT_RETRY_COOLDOWN", requestId: "supplement-retry",
+      execution: { retryAfterSeconds: seconds === 120 ? 120 : undefined }
+    });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it.each([undefined, "", "   "])("preserves reconciliation metadata when the server message is %s", async (message) => {
     send.mockResolvedValue(response(409, JSON.stringify({
       error: { code: "EXECUTION_RECONCILIATION_REQUIRED", message, details: {

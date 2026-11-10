@@ -3,7 +3,7 @@ import { dialogClose } from "./dialogAssets";
 import { useEffect, useId, useRef, type ReactNode } from "react";
 
 /** Native modal keeps keyboard focus inside the setup and returns it to its trigger. */
-export function WorkbenchDialog({ title, onClose, children, className = "", placement = "center", compact = false, textClose = false, iconClose = false, closeOnBackdrop = false, hideClose = false }: { hideClose?: boolean; textClose?: boolean; iconClose?: boolean; compact?: boolean; placement?: "center" | "right"; className?: string; title: string; onClose: () => void; children: ReactNode; closeOnBackdrop?: boolean }) {
+export function WorkbenchDialog({ title, onClose, children, className = "", placement = "center", compact = false, textClose = false, iconClose = false, closeOnBackdrop = false, hideClose = false, closeIcon = dialogClose }: { closeIcon?: string; hideClose?: boolean; textClose?: boolean; iconClose?: boolean; compact?: boolean; placement?: "center" | "right"; className?: string; title: string; onClose: () => void; children: ReactNode; closeOnBackdrop?: boolean }) {
   const document = useHostDocument();
   const window = useHostWindow();
   const dialog = useRef<HTMLDialogElement>(null);
@@ -50,7 +50,7 @@ export function WorkbenchDialog({ title, onClose, children, className = "", plac
     const bounds = event.currentTarget.getBoundingClientRect();
     if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) onClose();
   }}>
-    <header><h2 id={titleId}>{title}</h2>{!hideClose && <button type="button" aria-label="Close dialog" onClick={onClose}>{textClose || (compact && !iconClose) ? <span aria-hidden="true">×</span> : <img src={dialogClose} width="24" height="24" alt="" />}</button>}</header>
+    <header><h2 id={titleId}>{title}</h2>{!hideClose && <button type="button" aria-label="Close dialog" onClick={onClose}>{textClose || (compact && !iconClose) ? <span aria-hidden="true">×</span> : <img src={closeIcon} width="24" height="24" alt="" />}</button>}</header>
     {children}
   </dialog>;
 }

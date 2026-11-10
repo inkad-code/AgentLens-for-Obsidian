@@ -1,3 +1,5 @@
+import { creatorStatus } from "./creatorStatusProjection";
+import type { AutoFetchActivity } from "../../workbench/AutoFetchActivity";
 import { userMessage } from "../../core/user-feedback";
 import { creatorStatusDots } from "./creatorAssets";
 import type { CreatorRecord } from "../../api/AgentLensApiClient";
@@ -5,14 +7,15 @@ import { useI18n } from "../../i18n/I18nProvider";
 
 export function CreatorStatus({ creator }: { creator: CreatorRecord }) {
   const { t } = useI18n();
+  const retryAt = creator.localStatus?.runState ? creator.localStatus.retryAt ?? null : creator.retryAt;
   return <div className="agentlens-creator-trace" aria-label={`Run trace for ${creator.displayName}`}>
     <div><strong>Frequency</strong><span>Every {creator.frequency.every} {creator.frequency.unit}{creator.frequency.every === 1 ? "" : "s"}</span></div>
-    <div><strong>{t("creator.lastChecked")}</strong><span>{formatTimestamp(creator.lastCheckedAt, "Never", true)}</span></div>
+    <div><strong>{t("creator.lastChecked")}</strong><span>{formatTimestamp(creator.lastSuccessfulCheckAt ?? null, "Never", true)}</span></div>
     <div><strong>{t("creator.nextCheck")}</strong><span>{formatTimestamp(creator.nextCheckAt, "Not scheduled")}</span></div>
     <div><strong>Last saved at</strong><span>{formatTimestamp(creator.lastSavedAt ?? null, "Never")}</span></div>
     <div><strong>Last saved</strong><span title={`Run ${creator.lastSavedFetchRunId ?? "—"}`}>{creator.lastSavedCount ?? 0}</span></div>
     <div><strong>Total saved</strong><span>{creator.importedCount}</span></div>
-    {creator.retryAt && <div className="is-retry"><strong>{t("creator.retryAt")}</strong><span>{formatTimestamp(creator.retryAt, creator.retryAt)}</span></div>}
+    {retryAt && <div className="is-retry"><strong>{t("creator.retryAt")}</strong><span>{formatTimestamp(retryAt, "—")}</span></div>}
   </div>;
 }
 
@@ -28,10 +31,11 @@ function formatTimestamp(value: string | null, fallback: string, relative = fals
 }
 
 
-export function CreatorBadge({creator}: {creator:CreatorRecord}) {
-  const state=!creator.autoFetchEnabled ? "paused" : creator.schedulerState==="retry_pending" || creator.lastError ? "failed" : creator.activeJobId ? "running" : creator.schedulerState==="scheduled" ? "scheduled" : "other";
-  const label=state==="paused" ? "Paused" : state==="failed" ? "Fetching Failed" : state==="running" ? "Fetching now" : state==="scheduled" ? "Scheduled" : creator.schedulerState.replaceAll("_"," ");
-  return <span className={`agentlens-creator-badge is-${state}`} title={creator.lastError ? userMessage(creator.lastError) : label}>
-    {state!=="other" && <img src={creatorStatusDots[state]} width="7" height="7" alt="" />}{label}
+export function CreatorBadge({creator, activity, pendingSync = false}: {creator: CreatorRecord; activity?: AutoFetchActivity | undefined; pendingSync?: boolean}) {
+  const status = creatorStatus(creator, activity);
+  const label = pendingSync ? "Pending sync" : status.label;
+  return <span className={`agentlens-creator-badge is-${status.kind}`} data-main-status={status.mainStatus}
+    data-sub-status={status.subStatus} title={status.mainStatus === "failed" && (creator.localStatus?.lastError ?? creator.lastError) ? userMessage(creator.localStatus?.lastError ?? creator.lastError!) : label}>
+    <img src={creatorStatusDots[status.kind]} width="7" height="7" alt="" />{label}
   </span>;
 }

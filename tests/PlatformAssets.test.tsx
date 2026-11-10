@@ -12,6 +12,19 @@ const platforms = [
 ];
 
 describe("platform icons", () => {
+  it.each(["glyph", "creator", "author"] as const)("keeps the complete Xiaohongshu wordmark in the %s viewport", variant => {
+    const { container } = render(<PlatformIcon id="xiaohongshu" variant={variant} />);
+    const source = container.querySelector("img")!.getAttribute("src")!;
+    const svg = new DOMParser().parseFromString(decodeURIComponent(source.split(",")[1]!), "image/svg+xml");
+    const [x, y, width, height] = svg.documentElement.getAttribute("viewBox")!.split(" ").map(Number) as [number, number, number, number];
+    // The exported red wordmark occupies x=6..30 and y=13.5..22.23.
+    expect(x).toBeLessThanOrEqual(6);
+    expect(x + width).toBeGreaterThanOrEqual(30);
+    expect(y).toBeLessThanOrEqual(13.5);
+    expect(y + height).toBeGreaterThanOrEqual(22.23);
+    expect(svg.querySelector('path[fill="#FF0035"]')).not.toBeNull();
+  });
+
   it("renders a valid Figma SVG badge for every current platform", () => {
     expect(platforms).toHaveLength(24);
 

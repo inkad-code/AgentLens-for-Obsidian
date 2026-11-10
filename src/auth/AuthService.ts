@@ -22,11 +22,19 @@ export interface RefreshTokenPersistence {
   clear(): Promise<void>;
 }
 
+export interface AuthRecovery {
+  attempt: number;
+  nextRetryAt: number;
+  code?: string | undefined;
+  status?: number | undefined;
+  requestId?: string | undefined;
+}
+
 export type AuthState =
   | { status: "signed_out" }
   | { status: "authorizing"; authorization: DeviceAuthorization; expiresAt: number; nextPollAt: number; clientType?: typeof OBSIDIAN_PLUGIN_CLIENT_TYPE | undefined; provider?: "google" | "email" | undefined }
-  | { status: "signed_in"; accessToken: string; accessTokenExpiresAt: number; clientType?: typeof OBSIDIAN_PLUGIN_CLIENT_TYPE | undefined }
-  | { status: "error"; reason: "denied" | "expired" | "refresh_failed" | "refresh_unavailable" | "credential_unavailable"; provider?: "google" | "email" | undefined };
+  | { status: "signed_in"; accessToken: string; accessTokenExpiresAt: number; clientType?: typeof OBSIDIAN_PLUGIN_CLIENT_TYPE | undefined; recovery?: AuthRecovery | undefined }
+  | { status: "error"; reason: "denied" | "expired" | "refresh_failed" | "refresh_unavailable" | "credential_unavailable"; provider?: "google" | "email" | undefined; recovery?: AuthRecovery | undefined };
 
 export class AuthService {
   private state: AuthState = { status: "signed_out" };
@@ -35,6 +43,8 @@ export class AuthService {
   private generation = 0;
   private signingOut = false;
   private starting = false;
+  private refreshFailure?: { error: unknown; recovery: AuthRecovery } | undefined;
+  private pendingRefreshToken?: string | undefined;
   private verification?: AbortController | undefined;
   private readonly listeners = new Set<(state: Readonly<AuthState>) => void>();
 
@@ -45,6 +55,8 @@ export class AuthService {
     private readonly verifyHuman?: ((signal: AbortSignal) => Promise<string>) | undefined
   ) {}
 
+  sessionEpoch(): number { return this.generation; }
+
   snapshot(): Readonly<AuthState> {
     return this.state;
   }
@@ -54,10 +66,10 @@ export class AuthService {
     return () => this.listeners.delete(listener);
   }
 
-  async restore(): Promise<AuthState> {
+  async restore(force = false): Promise<AuthState> {
     if (this.state.status === "authorizing" || this.starting || this.signingOut) return this.state;
     try {
-      return await this.refreshSession();
+      return await this.refreshSession(force);
     } catch {
       return this.state;
     }
@@ -67,6 +79,7 @@ export class AuthService {
     this.verification?.abort();
     return this.requests.runExclusive("auth:start", () => {
       const generation = ++this.generation;
+      this.refreshFailure = undefined;
       this.starting = true;
       return this.serialize(async () => {
         if (generation !== this.generation) return this.state;
@@ -101,6 +114,7 @@ export class AuthService {
     if (!this.api.authenticateEmail || !this.api.approveDevice) return Promise.reject(new Error("Email sign-in is unavailable."));
     return this.requests.runExclusive("auth:email", () => {
       const generation = ++this.generation;
+      this.refreshFailure = undefined;
       this.starting = true;
       return this.serialize(async () => {
         if (generation !== this.generation) return this.state;
@@ -153,12 +167,17 @@ export class AuthService {
         throw error;
       }
       // Retain newly issued credentials until a queued logout can revoke them.
-      if (result.status === "authorized") await this.refreshTokens.save(result.refreshToken);
+      if (result.status === "authorized") {
+        this.pendingRefreshToken = result.refreshToken;
+        await this.refreshTokens.save(result.refreshToken);
+        this.pendingRefreshToken = undefined;
+      }
       if (generation !== this.generation) return this.state;
       if (result.status === "denied" || result.status === "expired") {
         return this.setState({ status: "error", reason: result.status, ...(current.provider ? {provider: current.provider} : {}) });
       }
       if (result.status === "authorized") {
+        this.refreshFailure = undefined;
         return this.setState({
           status: "signed_in",
           accessToken: result.accessToken,
@@ -173,8 +192,21 @@ export class AuthService {
 
   async accessToken(): Promise<string | null> {
     if (this.signingOut || this.starting || this.state.status === "authorizing") return null;
-    const state = await this.refreshSession();
-    return state.status === "signed_in" ? state.accessToken : null;
+    try {
+      await this.refreshSession();
+    } catch (error) {
+      const current = this.state;
+      if (!this.signingOut && !this.starting && current.status === "signed_in" && current.accessTokenExpiresAt > this.now()) {
+        return current.accessToken;
+      }
+      throw error;
+    }
+    const state = this.state;
+    if (this.signingOut || this.starting) return null;
+    if (state.status !== "signed_in") return null;
+    if (state.accessTokenExpiresAt > this.now()) return state.accessToken;
+    const failure = this.refreshFailure?.error;
+    throw failure instanceof Error ? failure : new AgentLensError("auth_required", "The saved session must be refreshed before continuing.", true);
   }
 
   cancelPendingSignIn(): Promise<void> {
@@ -184,42 +216,66 @@ export class AuthService {
   signOut(): Promise<void> {
     return this.requests.runExclusive("auth:logout", () => {
       ++this.generation;
+      this.refreshFailure = undefined;
       this.verification?.abort();
       this.signingOut = true;
       this.setState({ status: "signed_out" });
       return this.serialize(async () => {
         try {
-          const refreshToken = await this.refreshTokens.load();
+          const refreshToken = this.pendingRefreshToken ?? await this.refreshTokens.load();
           if (refreshToken) await this.api.revoke(refreshToken);
         } finally {
+          this.pendingRefreshToken = undefined;
           await this.refreshTokens.clear();
         }
       }).finally(() => { this.signingOut = false; });
     });
   }
 
-  private async refreshSession(): Promise<AuthState> {
-    if (this.state.status === "signed_in" && this.state.accessTokenExpiresAt - this.now() > 30_000) {
+  private async refreshSession(force = false): Promise<AuthState> {
+    if (this.state.status === "signed_in" && this.state.accessTokenExpiresAt - this.now() > 30_000 && !this.refreshFailure) {
       return this.state;
     }
     const generation = this.generation;
     return this.requests.runExclusive(`auth:refresh:${generation}`, () => this.serialize(async () => {
       if (generation !== this.generation || this.signingOut || this.starting) return this.state;
+      if (!force && this.refreshFailure && this.now() < this.refreshFailure.recovery.nextRetryAt) {
+        throw this.refreshFailure.error;
+      }
+      const previous = this.state.status === "signed_in" ? this.state : undefined;
       let token: string | null;
       try {
-        token = await this.refreshTokens.load();
+        token = this.pendingRefreshToken ?? await this.refreshTokens.load();
       } catch (error) {
         if (generation !== this.generation || this.signingOut) return this.state;
         this.setState({ status: "error", reason: "credential_unavailable" });
         throw error;
       }
       if (generation !== this.generation) return this.state;
-      if (!token) return this.setState({ status: "signed_out" });
+      if (!token) {
+        this.refreshFailure = undefined;
+        return this.setState({ status: "signed_out" });
+      }
+      let savingCredential = false;
       try {
+        if (this.pendingRefreshToken) {
+          savingCredential = true;
+          await this.refreshTokens.save(this.pendingRefreshToken);
+          this.pendingRefreshToken = undefined;
+          savingCredential = false;
+        }
+        if (generation !== this.generation || this.signingOut || this.starting) return this.state;
         const result = await this.api.refresh(token);
         // Logout runs after this operation and must revoke the latest rotated token.
-        if (result.refreshToken) await this.refreshTokens.save(result.refreshToken);
+        if (result.refreshToken) {
+          this.pendingRefreshToken = result.refreshToken;
+          savingCredential = true;
+          await this.refreshTokens.save(result.refreshToken);
+          this.pendingRefreshToken = undefined;
+          savingCredential = false;
+        }
         if (generation !== this.generation) return this.state;
+        this.refreshFailure = undefined;
         return this.setState({
           status: "signed_in",
           accessToken: result.accessToken,
@@ -228,13 +284,18 @@ export class AuthService {
         });
       } catch (error) {
         if (generation !== this.generation) return this.state;
-        if (invalidRefreshCredential(error)) {
+        if (!savingCredential && invalidRefreshCredential(error)) {
+          this.pendingRefreshToken = undefined;
+          this.refreshFailure = undefined;
+          this.setState({ status: "error", reason: "refresh_failed" });
           await this.refreshTokens.clear();
           if (generation !== this.generation) return this.state;
-          this.setState({ status: "error", reason: "refresh_failed" });
           throw error;
         }
-        this.setState({ status: "error", reason: "refresh_unavailable" });
+        const attempt = (this.refreshFailure?.recovery.attempt ?? 0) + 1;
+        const recovery = refreshRecovery(error, attempt, this.now() + Math.min(60_000, 5_000 * 2 ** Math.min(attempt - 1, 4)));
+        this.refreshFailure = { error, recovery };
+        this.setState(previous ? { ...previous, recovery } : { status: "error", reason: "refresh_unavailable", recovery });
         throw error;
       }
     }));
@@ -251,6 +312,17 @@ export class AuthService {
     this.listeners.forEach((listener) => listener(state));
     return state;
   }
+}
+
+function refreshRecovery(error: unknown, attempt: number, nextRetryAt: number): AuthRecovery {
+  const details = error instanceof AgentLensError ? error : undefined;
+  return {
+    attempt,
+    nextRetryAt,
+    ...(details ? { code: details.code } : {}),
+    ...(details?.status !== undefined && Number.isInteger(details.status) && details.status >= 100 && details.status <= 599 ? { status: details.status } : {}),
+    ...(details?.requestId && /^[A-Za-z0-9_-]{1,128}$/.test(details.requestId) ? { requestId: details.requestId } : {})
+  };
 }
 
 function invalidRefreshCredential(error: unknown): boolean {

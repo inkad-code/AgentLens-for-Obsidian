@@ -20,6 +20,24 @@ const IDENTITY = {
 };
 
 describe("AgentLensApiClient", () => {
+  it.each([undefined, "foreign-install", ""])("rejects foreign or unproven authentication identity %s", async installationId => {
+    const response = { success: true, data: { status: "authorized", installationId,
+      accessToken: "access", refreshToken: "refresh", accessTokenExpiresAt: "2026-08-20T01:00:00Z" } };
+    const api = new AgentLensApiClient(new FakeTransport([response, response, response]), IDENTITY, () => Date.parse("2026-08-20T00:00:00Z"));
+    await expect(api.refresh("refresh")).rejects.toThrow("installation");
+    await expect(api.pollDeviceAuthorization("code")).rejects.toThrow("installation");
+    await expect(api.account("access")).rejects.toThrow("installation");
+  });
+  it("accepts the current installation session without requiring identity in pending responses", async () => {
+    const response = { success: true, data: { status: "authorized", installationId: "install-1",
+      accessToken: "access", refreshToken: "refresh", accessTokenExpiresAt: "2026-08-20T01:00:00Z" } };
+    const api = new AgentLensApiClient(new FakeTransport([response, response, {success: true, data: {status: "authorization_pending"}}]), IDENTITY, () => Date.parse("2026-08-20T00:00:00Z"));
+    expect(await api.refresh("refresh")).toMatchObject({accessToken: "access", refreshToken: "refresh"});
+    expect(await api.pollDeviceAuthorization("code")).toMatchObject({status: "authorized"});
+    expect(await api.pollDeviceAuthorization("code")).toEqual({status: "authorization_pending"});
+  });
+
+
   it("reads demo endpoints without authentication or installation headers", async () => {
     const response = { success: true, data: { fetchId: "demo", mode: "profile_page", platform: "x",
       creator: { creatorId: "spacex", displayName: "SpaceX" }, content: [],
@@ -36,6 +54,24 @@ describe("AgentLensApiClient", () => {
       expect(request.installationId).toBeUndefined();
       expect(request.method).toBe("GET");
     }
+  });
+
+  it.each([
+    ["youtube", "https://www.youtube.com/@creator"],
+    ["bilibili", "https://space.bilibili.com/12345"]
+  ])("keeps the %s profile cover before media supplementation", async (platform, url) => {
+    const cover = "https://cdn.example/listing-cover.jpg";
+    const transport = new FakeTransport([{ success: true, data: {
+      fetchId: "listing", mode: "profile_page", platform,
+      creator: { creatorId: "creator-1", displayName: "Creator" },
+      content: [{ contentId: "post-1", source: { canonicalUrl: url }, text: { title: "Listing post" },
+        previewUrl: cover, media: [], needSupplement: true }],
+      page: { cursor: null, hasMore: false, pageNumber: 1 },
+      usage: { charged: true, units: 1, remaining: 9 }
+    } }]);
+    const api = new AgentLensApiClient(transport, IDENTITY);
+    const page = await api.fetch("access", { url, mode: "profile_page" }, "list", "request-1");
+    expect(page.content[0]).toMatchObject({ thumbnailUrl: cover, media: [], needSupplement: true });
   });
 
   it("maps Google cancellation to a terminal denied result", async () => {
@@ -69,7 +105,7 @@ describe("AgentLensApiClient", () => {
 
   it("also normalizes titles returned for automatic creator updates", async () => {
     const transport = new FakeTransport([{ success: true, data: {
-      creatorId: "creator-1", fetchRunId: "run-1", fetchId: "fetch-1",
+      creatorId: "creator-1", fetchRunId: "run-1", fetchId: "fetch-1", serverCheckedAt: "2026-10-19T00:01:00.123456Z",
       content: [{ contentId: "post-1", source: { platform: "linkedin", sourceUrl: "https://linkedin.com/post-1" },
         text: { title: "&#60;p&#62;A &amp; B&#60;/p&#62;", caption: "Description" }, media: [] }],
       page: null
@@ -77,6 +113,7 @@ describe("AgentLensApiClient", () => {
     const page = await new AgentLensApiClient(transport, IDENTITY)
       .manualCreatorUpdates("access", "creator-1", "request", "idem");
     expect(page.previews[0]).toMatchObject({ platform: "linkedin", title: "A & B", text: "Description" });
+    expect(page.serverCheckedAt).toBe("2026-10-19T00:01:00.123456Z");
   });
 
   it("uses the username in a Snapchat link when the provider omits the creator name", async () => {
@@ -100,6 +137,20 @@ describe("AgentLensApiClient", () => {
     expect(result).toMatchObject({ fetchRunId: "run-1", cursor: "page-3", hasMore: true });
     expect(transport.requests[0]).toMatchObject({ path: "/v1/plugins/creators/creator%2F1/updates?fetchRunId=run-1&trigger=normal&cursor=page-2",
       accessToken: "access", installationId: "install-1", requestId: "request-2", idempotencyKey: "original-key" });
+  });
+
+  it.each([
+    { configRevision: 3, slotIndex: 2 },
+    { configRevision: 3, recoveryFrom: "2026-10-19T00:00:00.123456Z", recoveryThrough: "2026-10-19T01:00:00Z" }
+  ])("sends the exact persisted operation plan through the shared endpoint (%j)", async plan => {
+    const transport = new FakeTransport([{ success: true, data: { creatorId: "creator", fetchRunId: "run", fetchId: "page", content: [],
+      page: { cursor: null, hasMore: false, coverageComplete: true, truncated: false, stopReason: "done", requestId: "request" } } }]);
+    const client = new AgentLensApiClient(transport, IDENTITY);
+    await client.creatorUpdates("access", { creatorId: "creator", leaseId: "run", trigger: "recoveryFrom" in plan ? "catch_up" : "normal",
+      plan, saveFolderPath: "Research", noteTemplateId: "default", mediaPolicy: "link_only", schedulerState: "due", nextCheckAt: null }, null, "request", "stable-key");
+    const query = new URL(transport.requests[0]!.path, "https://example.test").searchParams;
+    for (const [key, value] of Object.entries(plan)) expect(query.get(key)).toBe(String(value));
+    expect(transport.requests[0]).toMatchObject({ requestId: "request", idempotencyKey: "stable-key", installationId: "install-1" });
   });
 
   const execution = { operationId: "run/1", creatorId: "creator/1", runTrigger: "normal", sourceStatus: "retry_pending",
@@ -238,7 +289,7 @@ describe("AgentLensApiClient", () => {
 
   it("rotates a refresh token before revoking the installation", async () => {
     const transport = new FakeTransport([
-      { success: true, data: { accessToken: "access-2", refreshToken: "refresh-2", accessTokenExpiresAt: "2026-08-20T01:00:00Z" } },
+      { success: true, data: { installationId: "install-1", accessToken: "access-2", refreshToken: "refresh-2", accessTokenExpiresAt: "2026-08-20T01:00:00Z" } },
       { success: true, data: { revoked: true } }
     ]);
     const client = new AgentLensApiClient(transport, IDENTITY, () => Date.parse("2026-08-20T00:00:00Z"));
@@ -249,6 +300,17 @@ describe("AgentLensApiClient", () => {
       accessToken: "access-2",
       installationId: "install-1"
     });
+  });
+
+  it("uses the response run identity while another automatic job owns the creator card", async () => {
+    const transport = new FakeTransport([{ success: true, data: {
+      creatorId: "creator-1", fetchRunId: "manual-run", fetchId: "manual-page", content: [],
+      activeJobId: "automatic-run", page: { cursor: null, hasMore: false, coverageComplete: true,
+        truncated: false, stopReason: "no_next_page", requestId: "manual-request" }
+    }}]);
+    const client = new AgentLensApiClient(transport, IDENTITY);
+    await expect(client.manualCreatorUpdates("access", "creator-1", "manual-request", "key"))
+      .resolves.toMatchObject({ fetchRunId: "manual-run", leaseId: "manual-run" });
   });
 
   it("accepts a completed manual check after the server clears its active job", async () => {
@@ -469,7 +531,7 @@ describe("AgentLensApiClient", () => {
 
   it.each(["week", "minute"] as const)("round-trips a %s creator frequency", async (unit) => {
     const creator = {
-      creatorId: "creator-weekly", followId: "account-follow", platform: "youtube", profileUrl: "https://youtube.com/@weekly",
+      creatorId: "creator-weekly", targetId: "obsidian-vault-opaque", followId: "account-follow", legacyFollowId: "old-shared-follow", platform: "youtube", profileUrl: "https://youtube.com/@weekly",
       displayName: "Weekly", handle: "weekly", avatarUrl: null,
       saveFolderPath: "Research/Weekly", noteTemplateId: "default", mediaPolicy: "download_all", autoFetchEnabled: true,
       frequency: { every: 2, unit, displayText: `Every 2 ${unit}s` }, preferredTimes: ["09:00"],
@@ -482,8 +544,8 @@ describe("AgentLensApiClient", () => {
     const transport = new FakeTransport([{ success: true, data: creator },
       { success: true, data: [{ ...creator, lastSavedAt: null, lastSavedCount: null, lastSavedFetchRunId: null }] },
       { success: true, data: [{ ...creator, lastSavedFetchRunId: null }] },
-      { success: true, data: [{ ...creator, lastSavedCount: 1.5 }] }]);
-    const client = new AgentLensApiClient(transport, IDENTITY);
+      { success: true, data: [{ ...creator, lastSavedCount: 1.5 }] }, { success: true, data: creator }]);
+    const client = new AgentLensApiClient(transport, { ...IDENTITY, targetId: "obsidian-vault-opaque" });
 
     await expect(client.updateCreatorSettings("access", "creator-weekly", {
       saveFolderPath: "Research/Weekly",
@@ -507,8 +569,13 @@ describe("AgentLensApiClient", () => {
     const withoutSaved = await client.listCreators("access");
     expect(withoutSaved[0]).not.toHaveProperty("lastSavedAt");
     expect(withoutSaved[0]?.followId).toBe("account-follow");
+    expect(withoutSaved[0]?.legacyFollowId).toBe("old-shared-follow");
+    expect(withoutSaved[0]?.targetId).toBe("obsidian-vault-opaque");
     await expect(client.listCreators("access")).rejects.toThrow("lastSavedFetchRunId");
     await expect(client.listCreators("access")).rejects.toThrow("Invalid last saved statistics");
+    await client.createCreator("access", { parsed: { creator: { ...creator, avatarUrl: undefined }, creatorToken: "verified", creatorTokenExpiresAt: "2026-11-01T00:00:00Z" },
+      saveFolderPath: "Research/Weekly", timezone: "UTC", every: 2, unit, noteTemplateId: "default", mediaPolicy: "download_all" }, "create-target");
+    expect(transport.requests.at(-1)?.body).toMatchObject({ targetId: "obsidian-vault-opaque" });
   });
 });
 
@@ -519,4 +586,60 @@ it("loads the ordered Obsidian public catalog without credentials", async () => 
   expect(result.platforms.map(p=>p.id)).toEqual(["zhihu","x"]);
   expect(transport.requests[0]).toMatchObject({path:"/v1/plugins/platform-catalog?clientType=obsidian_plugin"});
   expect(transport.requests[0]?.accessToken).toBeUndefined();
+});
+
+it("rejects Pinterest profiles in Bulk and creator resolve before transport", () => {
+  const transport=new FakeTransport([]);const client=new AgentLensApiClient(transport,IDENTITY);
+  expect(()=>client.fetch("access",{url:"https://pinterest.com/owner/",mode:"profile_page"},"bulk","r")).toThrow("Use a Pinterest board link");
+  expect(()=>client.parseCreator("access","https://pinterest.com/owner/","resolve")).toThrow("Use a Pinterest board link");
+  expect(transport.requests).toHaveLength(0);
+});
+
+it("submits offline configuration with the original key and rejects foreign acknowledgements", async () => {
+  const transport = new FakeTransport([{success: true, data: {followId: "follow/id", configRevision: 4}},
+    {success: true, data: {followId: "other", configRevision: 5}}]);
+  const api = new AgentLensApiClient(transport, IDENTITY);
+  const patch = {configRevision: 2, autoFetchEnabled: false};
+  await api.patchAccountFollow("token", "follow/id", patch, "original-key");
+  expect(transport.requests[0]).toMatchObject({path: "/v1/plugins/follows/follow%2Fid", method: "PATCH",
+    installationId: "install-1", idempotencyKey: "original-key", body: patch});
+  await expect(api.patchAccountFollow("token", "follow/id", patch, "original-key")).rejects.toThrow("acknowledgement");
+});
+it("sends durable deletion with its original key and requires confirmed removal", async () => {
+  const transport = new FakeTransport([{success: true, data: {removed: true}}, {success: true, data: {removed: false}}]);
+  const api = new AgentLensApiClient(transport, IDENTITY);
+  await api.deleteAccountFollowCommand("token", "follow/id", "delete-key");
+  expect(transport.requests[0]).toMatchObject({path: "/v1/plugins/follows/follow%2Fid", method: "DELETE",
+    installationId: "install-1", idempotencyKey: "delete-key"});
+  await expect(api.deleteAccountFollowCommand("token", "follow/id", "delete-key")).rejects.toThrow("not confirmed");
+});
+
+
+describe("saved list restoration", () => {
+  const saved = { fetchId: "original-fetch", mode: "profile_page", platform: "x",
+    creator: { creatorId: "creator", displayName: "Creator" }, content: [],
+    page: { cursor: "original-next", hasMore: true, pageNumber: 1 }, usage: { charged: true, units: 1, remaining: 10 } };
+  it("uses only the authenticated read endpoint and retains the historical receipt", async () => {
+    const transport = new FakeTransport([{ success: true, data: saved }]);
+    const api = new AgentLensApiClient(transport, IDENTITY);
+    expect(await api.restoreHistory("token", "original-fetch")).toMatchObject({ fetchId: saved.fetchId, usage: saved.usage, page: saved.page, historyRestore: true });
+    expect(transport.requests).toHaveLength(1);
+    expect(transport.requests[0]).toMatchObject({ method: "GET", path: "/v1/plugins/content/history/original-fetch", accessToken: "token", installationId: IDENTITY.installationId });
+    expect(transport.requests[0]?.idempotencyKey).toBeUndefined();
+  });
+  it("rejects a different result without falling back to fetch", async () => {
+    const transport = new FakeTransport([{ success: true, data: { ...saved, fetchId: "other" } }]);
+    await expect(new AgentLensApiClient(transport, IDENTITY).restoreHistory("token", "original-fetch")).rejects.toThrow("identity");
+    expect(transport.requests).toHaveLength(1);
+  });
+});
+
+it("loads only the authenticated Obsidian installation's published media policy", async () => {
+  const now = Date.parse("2026-11-11T00:00:00Z");
+  const policy = { version: 3, channel: "plugin_center", expiresAt: "2026-11-11T00:10:00Z", allowedHosts: ["tiktok.com", "agentlensapi.io"] };
+  const transport = new FakeTransport([{ success: true, data: policy }, { success: true, data: { ...policy, expiresAt: "2026-11-10T00:00:00Z" } }]);
+  const api = new AgentLensApiClient(transport, IDENTITY, () => now);
+  expect(await api.mediaRecoveryPolicy("original-access")).toEqual(policy);
+  expect(transport.requests[0]).toEqual({ path: "/v1/plugins/media-policy?channel=plugin_center", accessToken: "original-access", installationId: "install-1" });
+  await expect(api.mediaRecoveryPolicy("original-access")).rejects.toThrow("expired");
 });

@@ -35,3 +35,22 @@ describe("searchable settings", () => {
     expect(host.saveSettings).toHaveBeenCalledTimes(2);
   });
 });
+
+
+describe("asynchronous settings diagnostics", () => {
+  it.each([false, true])("does not assimilate the host Setting thenable (failed=%s)", async failed => {
+    const {host, tab} = fixture();
+    const summary = {environment: "desktop", shortInstallationId: "test", pendingActions: 0, ledgerEntries: 0};
+    host.diagnosticsSummarySnapshot.mockReturnValue(summary);
+    host.diagnosticsSummary.mockImplementation(() => failed ? Promise.reject(new Error("offline")) : Promise.resolve(summary));
+    // The real Setting.then invokes its callback with itself. Count assimilation
+    // without resolving again, so a regression fails instead of hanging Vitest.
+    const then = vi.fn();
+    const setting = {then, setName: () => setting, setDesc: vi.fn((_description: string) => setting), addButton: () => setting};
+    tab.getSettingDefinitions().find(row => row.name === "Account and diagnostics")!.render(setting as unknown as Setting);
+    await Promise.resolve(); await Promise.resolve();
+    expect(setting.setDesc).toHaveBeenCalledTimes(2);
+    expect(setting.setDesc.mock.calls[1]?.[0]).toContain(failed ? "temporarily unavailable" : "installation test");
+    expect(then).not.toHaveBeenCalled();
+  });
+});

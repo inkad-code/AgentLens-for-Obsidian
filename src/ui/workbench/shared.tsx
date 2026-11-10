@@ -9,6 +9,12 @@ import type { AccountCapabilities, PublicPlatformCatalog } from "../../api/contr
 import { userMessage } from "../../core/user-feedback";
 import { versionAtLeast } from "../../core/versions";
 
+export function supportedPlatforms(catalog: AccountCapabilities | PublicPlatformCatalog | null | undefined,
+  mode: "single" | "profile" | "autoFetch") {
+  return catalog?.platforms.filter(platform => platform.available && platform[mode]
+    && Object.prototype.hasOwnProperty.call(platformAssets, platform.id)) ?? [];
+}
+
 export function SupportedPlatforms({ capabilities, publicCatalog, catalogError = false, mode }: {
   capabilities: AccountCapabilities | null;
   publicCatalog?: PublicPlatformCatalog | null;
@@ -17,19 +23,21 @@ export function SupportedPlatforms({ capabilities, publicCatalog, catalogError =
 }) {
   // Both catalogs are ordered by the platform. Filtering must preserve that order.
   const catalog = capabilities ?? publicCatalog;
-  const platforms = catalog?.platforms.filter(platform => platform.available && platform[mode] && Object.prototype.hasOwnProperty.call(platformAssets, platform.id)) ?? [];
+  const platforms = supportedPlatforms(catalog, mode);
   return (
     <div className="agentlens-platforms" aria-live="polite" aria-label={`${mode === "single" ? "Single Fetch" : mode === "profile" ? "Bulk Fetch" : "Auto-Fetch"} supported platforms`}>
       <span className="agentlens-platforms-label">Supports</span>
-      {!catalog ? <span>{catalogError ? "Platform list unavailable" : "Loading supported platforms…"}</span> : platforms.length > 0
-        ? platforms.map(platform => {
-          const scope = "profileScope" in platform && platform.profileScope === "subreddits_only";
-          return <span key={platform.id} className={platform.available ? undefined : "is-unavailable"}
-            aria-label={scope ? `${platform.label}: subreddit links only` : `${platform.label}${platform.available ? "" : " · plan upgrade"}`}>
-            <PlatformIcon id={platform.id} /><span className="agentlens-sr-only">{platform.label}{scope && mode !== "single" ? " · subreddits only" : ""}{platform.available ? "" : " · plan upgrade"}</span>
-          </span>;
-        }) : <span>No supported platforms are available for this account.</span>}
-      {catalog && catalogError && <p role="status">Platform list could not be refreshed. Showing last available platforms.</p>}
+      <div className="agentlens-platform-icons">
+        {!catalog ? <span>{catalogError ? "Platform list unavailable" : "Loading supported platforms…"}</span> : platforms.length > 0
+          ? platforms.map(platform => {
+            const scope = "profileScope" in platform && platform.profileScope === "subreddits_only";
+            return <span key={platform.id} className={platform.available ? undefined : "is-unavailable"}
+              aria-label={scope ? `${platform.label}: subreddit links only` : `${platform.label}${platform.available ? "" : " · plan upgrade"}`}>
+              <PlatformIcon id={platform.id} /><span className="agentlens-sr-only">{platform.label}{scope && mode !== "single" ? " · subreddits only" : ""}{platform.available ? "" : " · plan upgrade"}</span>
+            </span>;
+          }) : <span>No supported platforms are available for this account.</span>}
+        {catalog && catalogError && <p role="status">Platform list could not be refreshed. Showing last available platforms.</p>}
+      </div>
     </div>
   );
 }
@@ -47,7 +55,9 @@ export function PlatformIcon({ id, variant = "badge" }: { id: string; variant?: 
 function croppedPlatformAsset(asset: string, id: string): string {
   const prefix = "data:image/svg+xml;charset=utf-8,";
   if (!asset.startsWith(prefix)) return asset;
-  return prefix + encodeURIComponent(decodeURIComponent(asset.slice(prefix.length)).replace('viewBox="0 0 36 36"', id === "zhihu" ? 'viewBox="5 5 26 26"' : 'viewBox="8 8 20 20"'));
+  // The wordmarks extend beyond the central 20px used by square platform glyphs.
+  const wideWordmark = id === "zhihu" || id === "xiaohongshu";
+  return prefix + encodeURIComponent(decodeURIComponent(asset.slice(prefix.length)).replace('viewBox="0 0 36 36"', wideWordmark ? 'viewBox="5 5 26 26"' : 'viewBox="8 8 20 20"'));
 }
 
 export function EvidenceStep({ label, state }: { label: string; state?: "current" }) {

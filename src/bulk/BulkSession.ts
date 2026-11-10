@@ -26,7 +26,7 @@ export class BulkSession {
       if (page.page?.hasMore && (!page.page.cursor || page.page.cursor === cursor)) {
         throw new Error("The next page cursor is missing or did not advance. Please retry the page.");
       }
-      this.append(page);
+      this.append(page, cursor !== null);
       return page;
     }).finally(() => {
       if (this.inFlight.get(scope) === request) this.inFlight.delete(scope);
@@ -35,30 +35,40 @@ export class BulkSession {
     return request;
   }
 
-  /** A creator list may contain only article summaries. Hydrate once per loaded article. */
-  async hydrate(key: string, loader: (url: string) => Promise<PreviewResult>): Promise<PreviewResult> {
+  hasPendingDetails(key: string): boolean {
+    return this.details.has(key);
+  }
+
+  /** Called by explicit Preview or confirmed eligible bulk save. No paid single-post fallback. */
+  async supplement(key: string, loader: (preview: PreviewResult) => Promise<PreviewResult>): Promise<PreviewResult> {
     const current = this.items.get(key);
     if (!current) throw new Error("This post is no longer in the loaded list.");
-    if (current.post.platform !== "wechat_official_account") return current;
-    const complete = this.completeDetails.get(key);
-    if (complete) return complete;
+    if (current.post.needSupplement !== true) return current;
+    if (current.historyRestore) throw new Error("This saved post is incomplete. History restoration never requests new details.");
     const pending = this.details.get(key);
     if (pending) return pending;
     const generation = this.generation;
-    const request = loader(current.post.canonicalUrl).then(detail => {
-      if (generation !== this.generation) throw new Error("The article list has changed. Please select the post again.");
-      if (contentKey(detail.post) !== key) throw new Error("The article returned does not match the selected post. Nothing was saved.");
-      const body = detail.post.body?.trim() || detail.post.text.trim();
-      if (!body || body === detail.post.title?.trim() || body === current.post.text.trim() && !body.includes("\n")) throw new Error("The full article was not returned. Please retry before saving.");
-      const hydrated = { ...detail, post: { ...detail.post,
+    const request = loader(current).then(detail => {
+      if (generation !== this.generation || this.items.get(key)?.fetchId !== current.fetchId)
+        throw new Error("The post list changed while loading details.");
+      if (contentKey(detail.post) !== key) throw new Error("The returned post does not match the selected post.");
+      if (detail.post.needSupplement === true) throw new Error("The source has not completed this post yet.");
+      if (current.post.platform === "wechat_official_account") {
+        const body = detail.post.body?.trim() || detail.post.text.trim();
+        if (!body || body === detail.post.title?.trim() || body === current.post.text.trim() && !body.includes("\n"))
+          throw new Error("The full article was not returned. Nothing was saved.");
+      }
+
+      const completed = { ...detail, post: { ...detail.post,
         thumbnailUrl: postThumbnailUrl(current.post) ?? postThumbnailUrl(detail.post) } };
-      this.items.set(key, hydrated);
-      this.completeDetails.set(key, hydrated);
-      return hydrated;
+      this.items.set(key, completed);
+      this.completeDetails.set(key, completed);
+      return completed;
     }).finally(() => { if (this.details.get(key) === request) this.details.delete(key); });
     this.details.set(key, request);
     return request;
   }
+
 
   reset(): void {
     this.generation += 1;
@@ -117,12 +127,16 @@ export class BulkSession {
     return this.pageUsage;
   }
 
-  private append(page: FetchPage): void {
+  private append(page: FetchPage, preserveExisting: boolean): void {
     for (const post of page.content) {
       const key = contentKey(post);
+      // Pagination may repeat older posts with incomplete metadata. Keep the
+      // original snapshot and its receipt, including in-flight detail ownership.
+      if (preserveExisting && this.items.has(key)) continue;
       if (!this.items.has(key)) this.order.push(key);
-      this.items.set(key, this.completeDetails.get(key) ?? {
+      this.items.set(key, (this.completeDetails.get(key)?.fetchId === page.fetchId ? this.completeDetails.get(key) : undefined) ?? {
         post,
+        ...(page.historyRestore ? { historyRestore: true } : {}),
         fetchId: page.fetchId,
         usageRemaining: page.usage.remaining,
         usage: page.usage,
@@ -138,6 +152,6 @@ export class BulkSession {
         remaining: page.usage.remaining
       });
     }
-    this.nextCursor = page.page?.hasMore ? page.page.cursor : null;
+    this.nextCursor = !page.historyRestore && page.page?.hasMore ? page.page.cursor : null;
   }
 }

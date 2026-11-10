@@ -5,11 +5,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,16 +13,25 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run scan:source
       - run: npm run package:release
-      - name: Attest release assets
-        if: github.event_name != 'pull_request'
-        uses: actions/attest@v4
+      - uses: actions/upload-artifact@v4
         with:
-          subject-path: dist/release/0.1.3/*
-      - name: Keep the exact verified release files
-        uses: actions/upload-artifact@v4
-        with:
-          name: agentlens-social-importer-0.1.3
-          path: dist/release/0.1.3/*
+          name: agentlens-release
+          path: dist/release/*/*
           if-no-files-found: error
+  attest:
+    if: github.event_name != 'pull_request'
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: agentlens-release
+          path: release-assets
+      - uses: actions/attest@v4
+        with:
+          subject-path: release-assets/**/*

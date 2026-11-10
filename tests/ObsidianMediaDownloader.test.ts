@@ -120,3 +120,92 @@ it("accepts exactly 50 MiB on mobile and rejects one byte above it", async () =>
   send.mockImplementation(async () => response(200, MOBILE_MEDIA_DOWNLOAD_LIMIT + 1));
   await expect(downloader.download(media)).rejects.toThrow("exceeds");
 });
+
+const recoveryPolicy = () => Promise.resolve({ version: 1, channel: "plugin_center" as const,
+  expiresAt: new Date(Date.now() + 60_000).toISOString(), allowedHosts: ["tiktok.com", "tiktokcdn.com", "agentlensapi.io"] });
+
+describe("bounded 403 media recovery", () => {
+  const media = { id: "original-media", kind: "video" as const, sourceUrl: "https://www.tiktok.com/aweme/v1/play/?video_id=original",
+    downloadHeaders: { Cookie: "private", Authorization: "Bearer source", Referer: "https://www.tiktok.com/" } };
+  it.each([false, true])("retries the original media once without source headers (host rejects=%s)", async rejects => {
+    const send = vi.fn().mockImplementationOnce(async () => { if (rejects) throw { status: 403 }; return response(403, 0); })
+      .mockResolvedValueOnce({ ...response(200, 3), headers: { "content-type": "video/mp4", "content-length": "3" } });
+    const loadPolicy = vi.fn(recoveryPolicy);
+    const progress = vi.fn();
+    await expect(new ObsidianMediaDownloader(100, send, loadPolicy).download(media, undefined, progress)).resolves.toHaveProperty("byteLength", 3);
+    expect(send).toHaveBeenCalledTimes(2);
+    const recovered = send.mock.calls[1]![0] as RequestUrlParam;
+    const url = new URL(recovered.url);
+    expect(url.origin + url.pathname).toBe("https://m3u8.agentlensapi.io/downloader/media");
+    expect(url.searchParams.get("url")).toBe(media.sourceUrl);
+    expect(url.searchParams.get("mode")).toBe("passthrough");
+    expect(recovered.headers).toEqual({});
+    expect(media.downloadHeaders.Cookie).toBe("private");
+    expect(loadPolicy).toHaveBeenCalledTimes(1);
+    expect(progress).toHaveBeenLastCalledWith({ receivedBytes: 3, totalBytes: 3 });
+  });
+  it.each([401,404,429,500])("does not recover HTTP %s", async status => {
+    const send = vi.fn(async () => response(status, 0)); const policy = vi.fn(recoveryPolicy);
+    await expect(new ObsidianMediaDownloader(100, send, policy).download(media)).rejects.toMatchObject({ status });
+    expect(send).toHaveBeenCalledTimes(1); expect(policy).not.toHaveBeenCalled();
+  });
+  it.each([403,502])("stops after recovery HTTP %s", async status => {
+    const send = vi.fn().mockResolvedValueOnce(response(403, 0)).mockResolvedValueOnce(response(status, 0));
+    await expect(new ObsidianMediaDownloader(100, send, recoveryPolicy).download(media)).rejects.toMatchObject({ name: "MediaRecoveryError", status });
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+  it.each(["application/json", "text/html"])('validates recovery content (%s)', async type => {
+    const send = vi.fn().mockResolvedValueOnce(response(403, 0)).mockResolvedValueOnce({ ...response(200, 3), headers: { "content-type": type } });
+    await expect(new ObsidianMediaDownloader(100, send, recoveryPolicy).download(media)).rejects.toMatchObject({ name: "MediaRecoveryError" });
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+  it("keeps the mobile size limit on recovery", async () => {
+    const send = vi.fn().mockResolvedValueOnce(response(403, 0)).mockResolvedValueOnce(response(200, 101));
+    await expect(new ObsidianMediaDownloader(100, send, recoveryPolicy).download(media)).rejects.toMatchObject({ name: "MediaRecoveryError" });
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+  it("never nests an existing media-service URL", async () => {
+    const send = vi.fn(async () => response(403, 0)); const policy = vi.fn(recoveryPolicy);
+    await expect(new ObsidianMediaDownloader(100, send, policy).download({ ...media, sourceUrl: "https://m3u8.agentlensapi.io/downloader/media?url=original" }))
+      .rejects.toMatchObject({ name: "MediaRecoveryError" });
+    expect(send).toHaveBeenCalledTimes(1); expect(policy).not.toHaveBeenCalled();
+  });
+  it.each([{ hosts: ["tiktok.com"] }, { hosts: ["agentlensapi.io"] }])("requires both original and recovery domains in Obsidian's own policy", async ({ hosts }) => {
+    const send = vi.fn(async () => response(403, 0));
+    const policy = async () => ({ ...await recoveryPolicy(), allowedHosts: hosts });
+    await expect(new ObsidianMediaDownloader(100, send, policy).download(media)).rejects.toMatchObject({ name: "MediaRecoveryError" });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+  it("cancels while policy loading and ignores its late result", async () => {
+    let finish!: (value: Awaited<ReturnType<typeof recoveryPolicy>>) => void;
+    const policy = vi.fn(() => new Promise<Awaited<ReturnType<typeof recoveryPolicy>>>(resolve => { finish = resolve; }));
+    const send = vi.fn(async () => response(403, 0)); const controller = new AbortController();
+    const work = new ObsidianMediaDownloader(100, send, policy).download(media, controller.signal);
+    await vi.waitFor(() => expect(policy).toHaveBeenCalledTimes(1)); controller.abort();
+    await expect(work).rejects.toMatchObject({ name: "AbortError" });
+    finish(await recoveryPolicy()); await Promise.resolve();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+});
+
+it("bounds a stalled policy request and never consumes late recovery authorization", async () => {
+  vi.useFakeTimers();
+  try {
+    const send = vi.fn(async () => response(403, 0));
+    const load = vi.fn(() => new Promise<Awaited<ReturnType<typeof recoveryPolicy>>>(() => {}));
+    const work = new ObsidianMediaDownloader(100, send, load).download({ id: "v", kind: "video", sourceUrl: "https://www.tiktok.com/play" });
+    const outcome = expect(work).rejects.toMatchObject({ name: "MediaRecoveryError" });
+    await vi.advanceTimersByTimeAsync(15_000); await outcome;
+    expect(send).toHaveBeenCalledTimes(1); expect(load).toHaveBeenCalledTimes(1);
+  } finally { vi.useRealTimers(); }
+});
+
+it("only passes a public Bilibili page referer to recovery, without its query or source headers", async () => {
+  const send = vi.fn().mockResolvedValueOnce(response(403, 0)).mockResolvedValueOnce(response(200, 3));
+  const load = async () => ({ ...await recoveryPolicy(), allowedHosts: ["bilivideo.com", "agentlensapi.io"] });
+  await new ObsidianMediaDownloader(100, send, load).download({ id: "b", kind: "video", sourceUrl: "https://cdn.bilivideo.com/a",
+    downloadHeaders: { Referer: "https://www.bilibili.com/video/BV1?token=private#fragment", Cookie: "private" } });
+  const request = send.mock.calls[1]![0] as RequestUrlParam;
+  expect(new URL(request.url).searchParams.get("pageUrl")).toBe("https://www.bilibili.com/video/BV1");
+  expect(request.headers).toEqual({});
+});

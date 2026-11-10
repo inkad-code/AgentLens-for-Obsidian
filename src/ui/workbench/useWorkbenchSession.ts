@@ -1,7 +1,7 @@
 import { usePlatformDirectory } from "../../runtime/usePlatformDirectory";
 import { useHostWindow } from "./HostDocument";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AuthState, DeviceAuthorizationIntent } from "../../auth/AuthService";
+import type { AuthRecovery, AuthState, DeviceAuthorizationIntent } from "../../auth/AuthService";
 import type { AccountSummary } from "../../api/AgentLensApiClient";
 import type { AccountCapabilities, PublicPlatformCatalog } from "../../api/contracts";
 import type { AgentLensWorkbenchPort } from "../../workbench/ports";
@@ -23,7 +23,17 @@ export function useWorkbenchSession(service?: AgentLensWorkbenchPort) {
   const [authState, setAuthState] = useState<Readonly<AuthState>>(service?.authState() ?? { status: "signed_out" });
   const [authRestoring, setAuthRestoring] = useState(Boolean(service));
   const [authBusy, setAuthBusy] = useState(false);
+  const [authRecovering, setAuthRecovering] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const authGeneration = useRef(0);
+  const restoreFlight = useRef<Promise<void> | null>(null);
+  const sessionRecovery = useMemo<AuthRecovery | null>(() => {
+    if (authState.status === "signed_in") return authState.recovery ?? null;
+    if (authState.status === "error" && authState.reason === "refresh_unavailable") {
+      return authState.recovery ?? { attempt: 1, nextRetryAt: Date.now() + 5_000 };
+    }
+    return null;
+  }, [authState]);
   const sessionScope = useMemo(() => ({}), [service, authState.status]);
   const [accountSnapshot, setAccountSnapshot] = useState<{scope: object; value: AccountSummary} | null>(null);
   const account = accountSnapshot?.scope === sessionScope ? accountSnapshot.value : null;
@@ -31,6 +41,7 @@ export function useWorkbenchSession(service?: AgentLensWorkbenchPort) {
   const [accountStale, setAccountStale] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
   const accountRefresh = useRef<((force?: boolean) => Promise<void>) | null>(null);
+  const previousRecovery = useRef({ service, recovering: Boolean(sessionRecovery) });
   const signedIn = authState.status === "signed_in";
   const loadDirectory = useCallback((): Promise<AccountCapabilities | PublicPlatformCatalog> => {
     if (!service) return Promise.reject(new Error("Platform directory unavailable"));
@@ -42,7 +53,7 @@ export function useWorkbenchSession(service?: AgentLensWorkbenchPort) {
     installationId: signedIn ? account?.installationId : undefined,
     plan: signedIn ? account?.subscription.plan : undefined,
     clientType: "obsidian_plugin", load: loadDirectory, ownerWindow: window,
-    enabled: Boolean(service) && !authRestoring && (!signedIn || Boolean(account))
+    enabled: Boolean(service) && !authRestoring && (signedIn ? Boolean(account) : !sessionRecovery)
   });
   const data = directory.result?.data;
   const capabilities = signedIn && data && "accountId" in data ? data : null;
@@ -52,21 +63,83 @@ export function useWorkbenchSession(service?: AgentLensWorkbenchPort) {
 
 
   useEffect(() => {
+    authGeneration.current += 1;
+    restoreFlight.current = null;
+    setAuthRecovering(false);
     if (!service) {
       setAuthRestoring(false);
       return undefined;
     }
     let active = true;
     setAuthRestoring(true);
-    const unsubscribe = service.subscribeAuth(setAuthState);
+    setAuthState(service.authState());
+    const unsubscribe = service.subscribeAuth(next => { if (active) setAuthState(next); });
     void service.restoreAuth()
       .catch((error) => { if (active) setAuthError(message(error, "auth")); })
       .finally(() => { if (active) setAuthRestoring(false); });
     return () => {
       active = false;
+      authGeneration.current += 1;
+      restoreFlight.current = null;
       unsubscribe();
     };
   }, [service]);
+
+  const restoreSession = useCallback((force = false): Promise<void> => {
+    if (!service) return Promise.resolve();
+    if (restoreFlight.current) return restoreFlight.current;
+    const generation = authGeneration.current;
+    setAuthRecovering(true);
+    setAuthError(null);
+    const pending = Promise.resolve().then(() => {
+      if (authGeneration.current === generation) return service.restoreAuth(force);
+      return undefined;
+    }).then(() => undefined)
+      .catch(error => { if (authGeneration.current === generation) setAuthError(message(error, "auth")); })
+      .finally(() => {
+        if (authGeneration.current === generation && restoreFlight.current === pending) {
+          restoreFlight.current = null;
+          setAuthRecovering(false);
+        }
+      });
+    restoreFlight.current = pending;
+    return pending;
+  }, [service]);
+
+  useEffect(() => {
+    if (authState.status === "signed_in" || authState.status === "error" && authState.reason === "refresh_unavailable") return;
+    authGeneration.current += 1;
+    restoreFlight.current = null;
+    setAuthRecovering(false);
+  }, [service, authState.status, authState.status === "error" ? authState.reason : undefined]);
+
+  useEffect(() => {
+    if (!service || authRestoring || !sessionRecovery) return;
+    let active = true;
+    let timer: number | undefined;
+    const clearTimer = () => { if (timer !== undefined) window.clearTimeout(timer); timer = undefined; };
+    const schedule = () => {
+      clearTimer();
+      if (!active || window.document.visibilityState === "hidden" || window.navigator.onLine === false) return;
+      timer = window.setTimeout(() => {
+        timer = undefined;
+        if (active && window.document.visibilityState !== "hidden" && window.navigator.onLine !== false) void restoreSession();
+      }, Math.max(0, sessionRecovery.nextRetryAt - Date.now()));
+    };
+    schedule();
+    window.addEventListener("focus", schedule);
+    window.addEventListener("online", schedule);
+    window.addEventListener("offline", clearTimer);
+    window.document.addEventListener("visibilitychange", schedule);
+    return () => {
+      active = false;
+      clearTimer();
+      window.removeEventListener("focus", schedule);
+      window.removeEventListener("online", schedule);
+      window.removeEventListener("offline", clearTimer);
+      window.document.removeEventListener("visibilitychange", schedule);
+    };
+  }, [service, authRestoring, sessionRecovery, restoreSession, window]);
 
   useEffect(() => {
     setAccountSnapshot(null);
@@ -79,6 +152,7 @@ export function useWorkbenchSession(service?: AgentLensWorkbenchPort) {
     let pending: Promise<void> | null = null;
     let nextRefreshAt = 0;
     let retryDelayMs = 60_000;
+    let accountChanged = false;
     let timer: number | undefined;
     const clearTimer = () => {
       if (timer !== undefined) window.clearTimeout(timer);
@@ -100,6 +174,7 @@ export function useWorkbenchSession(service?: AgentLensWorkbenchPort) {
       pending = Promise.resolve().then(async () => {
         try {
           if (!active) return;
+          accountChanged = false;
           const nextAccount = await service.account();
           if (!active) return;
           setAccountSnapshot({scope: sessionScope, value: nextAccount});
@@ -108,6 +183,7 @@ export function useWorkbenchSession(service?: AgentLensWorkbenchPort) {
           setAuthError(null);
           retryDelayMs = 60_000;
           nextRefreshAt = Date.now() + 5 * 60_000;
+          if (accountChanged) nextRefreshAt = Date.now();
         } catch (error) {
           if (!active) return;
           setAccountStale(true);
@@ -122,6 +198,12 @@ export function useWorkbenchSession(service?: AgentLensWorkbenchPort) {
       return pending;
     };
     accountRefresh.current = refresh;
+    const unsubscribeAccount = service.subscribeAccountChanges?.(() => {
+      accountChanged = true;
+      nextRefreshAt = Date.now();
+      // Coalesce simultaneous completions and defer hidden-window reads until visible.
+      if (!pending) schedule();
+    });
     const visible = () => {
       if (window.document.visibilityState === "hidden") clearTimer();
       else void refresh();
@@ -133,6 +215,7 @@ export function useWorkbenchSession(service?: AgentLensWorkbenchPort) {
       active = false;
       clearTimer();
       if (accountRefresh.current === refresh) accountRefresh.current = null;
+      unsubscribeAccount?.();
       window.removeEventListener("focus", visible);
       window.document.removeEventListener("visibilitychange", visible);
     };
@@ -140,6 +223,16 @@ export function useWorkbenchSession(service?: AgentLensWorkbenchPort) {
   // platform catalog and account on each token rotation. Sign-out/service changes
   // still tear down this effect and clear the previous session.
   }, [service, authRestoring, authState.status, window, sessionScope]);
+
+  useEffect(() => {
+    const previous = previousRecovery.current;
+    previousRecovery.current = { service, recovering: Boolean(sessionRecovery) };
+    if (previous.service === service && previous.recovering && !sessionRecovery && signedIn && !authRestoring) {
+      // Resume reads immediately after reconnection without clearing their last good data.
+      void accountRefresh.current?.(true);
+      void directory.refresh();
+    }
+  }, [service, sessionRecovery, signedIn, authRestoring, directory.refresh]);
 
   useEffect(() => {
     if (!service || authState.status !== "authorizing") return undefined;
@@ -200,7 +293,7 @@ export function useWorkbenchSession(service?: AgentLensWorkbenchPort) {
     if(!service?.signInWithEmail)throw new Error("Email sign-in is unavailable. Use browser authorization.");
     await service.signInWithEmail(credentials);
   },false);
-  const retryRestore = () => service ? withAuthBusy(() => service.restoreAuth()) : Promise.resolve();
+  const retryRestore = () => restoreSession(true);
   const cancelSignIn = () => service ? withAuthBusy(() => service.signOut(), false).catch(() => undefined) : Promise.resolve();
   const signOut = () => service ? withAuthBusy(() => service.signOut()) : Promise.resolve();
 
@@ -218,8 +311,8 @@ export function useWorkbenchSession(service?: AgentLensWorkbenchPort) {
   }
 
   return {
-    authState, authRestoring, authBusy, authError, capabilities, capabilitiesError, publicCatalog, publicCatalogError, account, accountUpdatedAt,
-    accountStale, accountBusy, beginSignIn, emailSignIn, retryRestore,
+    authState, authRestoring, authBusy, authRecovering, sessionRecovery, authError, capabilities, capabilitiesError, publicCatalog, publicCatalogError, account, accountUpdatedAt,
+    accountStale: accountStale || Boolean(sessionRecovery), accountBusy, beginSignIn, emailSignIn, retryRestore,
     cancelSignIn, signOut, refreshAccount, openAuthorizationPage
   };
 }

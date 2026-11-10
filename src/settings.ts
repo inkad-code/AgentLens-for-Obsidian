@@ -333,11 +333,16 @@ export class AgentLensSettingTab extends PluginSettingTab {
               .onClick(() => void this.plugin.copyDiagnostics()),
           );
         void this.plugin.diagnosticsSummary().then(
-          (summary) => diagnostics.setDesc(formatDiagnostics(summary)),
-          () =>
+          (summary) => {
+            // Setting.then is a fluent helper, not a Promise. Never return it
+            // from a Promise callback: assimilation would resolve it forever.
+            diagnostics.setDesc(formatDiagnostics(summary));
+          },
+          () => {
             diagnostics.setDesc(
               "Privacy-safe diagnostics are temporarily unavailable. Tokens, paths and note content remain excluded.",
-            ),
+            );
+          },
         );
       },
     });

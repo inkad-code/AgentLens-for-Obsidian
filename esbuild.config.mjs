@@ -12,8 +12,8 @@ const context = await esbuild.context({
   plugins: [reactNoScripts],
   banner: { js: `/* AgentLens release profile: ${releaseProfile} */` },
   external: [
-    "node:*",
     "obsidian",
+    "node:*",
     "electron",
     "@electron/remote",
     "assert", "buffer", "events", "http", "https", "net", "tls", "url", "util", "stream", "dns",

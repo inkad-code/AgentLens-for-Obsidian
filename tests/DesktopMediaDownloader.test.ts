@@ -1,10 +1,11 @@
 // @vitest-environment node
+import { createHash } from "node:crypto";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { createServer, type Server } from "node:http";
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DesktopMediaDownloader, publishDesktopMedia, systemProxyEndpoint } from "../src/vault/DesktopMediaDownloader";
+import { DesktopMediaDownloader, publishDesktopMedia, fingerprintDesktopMedia, systemProxyEndpoint } from "../src/vault/DesktopMediaDownloader";
 import { DESKTOP_MEDIA_DOWNLOAD_LIMIT, MOBILE_MEDIA_DOWNLOAD_LIMIT } from "../src/core/platformPolicy";
 let server: Server; let url: string;
 beforeAll(async () => {
@@ -28,6 +29,16 @@ afterAll(async () => { server.closeAllConnections(); await new Promise<void>(res
 const media = (route: string) => ({ id:"v", kind:"video" as const, sourceUrl:url+route });
 it("uses 5 GiB desktop and 50 MiB mobile policies", () => {
  expect(DESKTOP_MEDIA_DOWNLOAD_LIMIT).toBe(5 * 1024 ** 3); expect(MOBILE_MEDIA_DOWNLOAD_LIMIT).toBe(50 * 1024 ** 2);
+});
+it.each(["/ok", "/unknown"])("reports received bytes without changing the streaming transport (%s)", async route => {
+ const progress = vi.fn();
+ const file = await new DesktopMediaDownloader(undefined, undefined, undefined, async () => "DIRECT").download(media(route), undefined, progress);
+ try {
+  expect(progress).toHaveBeenCalled();
+  expect(progress.mock.calls.at(-1)?.[0]).toMatchObject({ receivedBytes: file.sizeBytes });
+  if (route === "/unknown") expect(progress.mock.calls.at(-1)?.[0].totalBytes).toBeUndefined();
+  else expect(progress.mock.calls.at(-1)?.[0].totalBytes).toBe(file.sizeBytes);
+ } finally { await file.cleanup(); }
 });
 it("streams a 32 MiB file and publishes without replacing an existing destination", async () => {
  const file=await new DesktopMediaDownloader(undefined, undefined, undefined, async () => "DIRECT").download(media("/large"));
@@ -62,7 +73,8 @@ it("aborts idle bodies and releases slots", async () => {
  await expect(promise).rejects.toThrow("canceled");
  await expect(new DesktopMediaDownloader(undefined,30, undefined, async () => "DIRECT").download(media("/slow"))).rejects.toThrow("timed out");
  const after=(await readdir(tmpdir())).filter(x=>x.startsWith("agentlens-obsidian-media-"));
- expect(after.sort()).toEqual(before.sort());
+ // Other real-host downloads may remove their own pre-existing directories during this test.
+ expect(after.filter(name => !before.includes(name))).toEqual([]);
 });
 
 it.each([
@@ -97,4 +109,29 @@ it('does not fall back to a working direct origin when the configured proxy is u
 it('cancels while resolving system proxy settings',async()=>{
  const downloader=new DesktopMediaDownloader(undefined,30,undefined,()=>new Promise(()=>{}));
  await expect(downloader.download(media('/ok'))).rejects.toThrow('timed out');
+});
+
+it("fingerprints exact published bytes and rejects escaped, replaced or missing evidence", async () => {
+  const file = await new DesktopMediaDownloader(undefined, undefined, undefined, async () => "DIRECT").download(media("/ok"));
+  const vault = await mkdtemp(join(tmpdir(), "al-fingerprint-"));
+  try {
+    const expected = createHash("sha256").update(new Uint8Array(4096).fill(42)).digest("hex");
+    expect(file.sha256).toBe(expected);
+    await publishDesktopMedia(file, vault, "saved.mp4");
+    expect(await fingerprintDesktopMedia(vault, "saved.mp4")).toEqual({ sizeBytes: 4096, sha256: expected });
+    await writeFile(join(vault, "saved.mp4"), new Uint8Array(4096).fill(43));
+    expect((await fingerprintDesktopMedia(vault, "saved.mp4"))?.sha256).not.toBe(expected);
+    if (process.platform === "win32") {
+      // Directory junctions exercise linked paths without requiring symlink privileges.
+      await mkdir(join(vault, "original"));
+      await writeFile(join(vault, "original", "saved.mp4"), new Uint8Array(4096).fill(43));
+      await symlink(join(vault, "original"), join(vault, "alias"), "junction");
+      expect(await fingerprintDesktopMedia(vault, "alias/saved.mp4")).toBeUndefined();
+    } else {
+      await symlink(join(vault, "saved.mp4"), join(vault, "alias.mp4"));
+      expect(await fingerprintDesktopMedia(vault, "alias.mp4")).toBeUndefined();
+    }
+    expect(await fingerprintDesktopMedia(vault, "missing.mp4")).toBeUndefined();
+    await expect(fingerprintDesktopMedia(vault, "../outside.mp4")).rejects.toThrow("outside");
+  } finally { await file.cleanup(); await rm(vault, { recursive: true, force: true }); }
 });

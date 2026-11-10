@@ -85,7 +85,7 @@ describe("BulkSession", () => {
 describe("selected article details", () => {
   function articlePage() {
     const listing = page(["article"], null, 1);
-    listing.content = listing.content.map(post => ({ ...post, platform: "wechat_official_account", canonicalUrl: "https://mp.weixin.qq.com/s/article", text: "Article title", title: undefined }));
+    listing.content = listing.content.map(post => ({ ...post, needSupplement: true, platform: "wechat_official_account", canonicalUrl: "https://mp.weixin.qq.com/s/article", text: "Article title", title: undefined }));
     return listing;
   }
   it("fetches full text once, retains selection and uses the detail receipt for saving", async () => {
@@ -93,37 +93,38 @@ describe("selected article details", () => {
     const listing = articlePage();
     await session.load(null, async () => listing);
     session.toggle("wechat_official_account:article");
-    const detail = { post: { ...listing.content[0]!, title: "Article title", body: "Full article\nSecond paragraph", text: "Full article\nSecond paragraph" }, fetchId: "detail-fetch", demo: false };
+    const detail = { post: { ...listing.content[0]!, needSupplement: false, title: "Article title", body: "Full article\nSecond paragraph", text: "Full article\nSecond paragraph" }, fetchId: listing.fetchId, demo: false };
     const loader = vi.fn(async () => detail);
-    await Promise.all([session.hydrate("wechat_official_account:article", loader), session.hydrate("wechat_official_account:article", loader)]);
-    await session.hydrate("wechat_official_account:article", loader);
+    await Promise.all([session.supplement("wechat_official_account:article", loader), session.supplement("wechat_official_account:article", loader)]);
+    await session.supplement("wechat_official_account:article", loader);
     await session.load("next", async () => listing);
-    expect(loader).toHaveBeenCalledExactlyOnceWith("https://mp.weixin.qq.com/s/article");
+    expect(loader).toHaveBeenCalledTimes(1);
+    expect(loader.mock.calls[0]).toBeDefined();
     expect(session.selected()[0]).toMatchObject(detail);
   });
   it("refuses title-only and mismatched responses and allows an explicit retry", async () => {
     const session = new BulkSession(); const listing = articlePage();
     await session.load(null, async () => listing);
-    const loader = vi.fn(async () => ({ post: listing.content[0]!, demo: false }));
-    await expect(session.hydrate("wechat_official_account:article", loader)).rejects.toThrow("full article");
-    loader.mockResolvedValueOnce({ post: { ...listing.content[0]!, contentId: "other", text: "Full text" }, demo: false });
-    await expect(session.hydrate("wechat_official_account:article", loader)).rejects.toThrow("does not match");
+    const loader = vi.fn(async () => ({ post: { ...listing.content[0]!, needSupplement: false }, fetchId: listing.fetchId, demo: false }));
+    await expect(session.supplement("wechat_official_account:article", loader)).rejects.toThrow("full article");
+    loader.mockResolvedValueOnce({ post: { ...listing.content[0]!, needSupplement: false, contentId: "other", text: "Full text" }, fetchId: listing.fetchId, demo: false });
+    await expect(session.supplement("wechat_official_account:article", loader)).rejects.toThrow("does not match");
     expect(session.rows()[0]?.post.text).toBe("Article title");
-    loader.mockResolvedValueOnce({ post: { ...listing.content[0]!, text: "The complete article content" }, demo: false });
-    await expect(session.hydrate("wechat_official_account:article", loader)).resolves.toMatchObject({ post: { text: "The complete article content" } });
+    loader.mockResolvedValueOnce({ post: { ...listing.content[0]!, needSupplement: false, text: "The complete article content" }, fetchId: listing.fetchId, demo: false });
+    await expect(session.supplement("wechat_official_account:article", loader)).resolves.toMatchObject({ post: { text: "The complete article content" } });
   });
 });
 
 it("does not restore stale article details after the list is reset", async () => {
   const session = new BulkSession();
   const listing = page(["a"], null, 1);
-  listing.content = listing.content.map(post => ({...post, platform: "wechat_official_account"}));
+  listing.content = listing.content.map(post => ({...post, platform: "wechat_official_account", needSupplement: true}));
   await session.load(null, async () => listing);
   let finish!: (value: import("@/workbench/types").PreviewResult) => void;
-  const pending = session.hydrate("wechat_official_account:a", () => new Promise(resolve => { finish = resolve; }));
+  const pending = session.supplement("wechat_official_account:a", () => new Promise(resolve => { finish = resolve; }));
   session.reset();
   finish({post:{...listing.content[0]!,text:"Full article"},demo:false});
-  await expect(pending).rejects.toThrow("list has changed");
+  await expect(pending).rejects.toThrow("list changed");
   expect(session.rows()).toEqual([]);
 });
 
@@ -151,13 +152,60 @@ it("isolates page requests across reset and preserves the new in-flight request"
 it("preserves an article listing cover independently from detail attachments", async () => {
   const session = new BulkSession();
   const listing = page(["article"], null, 1);
-  listing.content = [{ ...listing.content[0]!, platform: "wechat_official_account", text: "Summary",
+  listing.content = [{ ...listing.content[0]!, platform: "wechat_official_account", needSupplement: true, text: "Summary",
     media: [{id:"cover",kind:"image",sourceUrl:"https://cdn.example/cover.jpg"}] }];
   await session.load(null, async () => listing);
-  const result = await session.hydrate("wechat_official_account:article", async () => ({
-    fetchId:"detail",demo:false,post:{...listing.content[0]!,text:"Full article body",media:[
+  const result = await session.supplement("wechat_official_account:article", async () => ({
+    fetchId:listing.fetchId,demo:false,post:{...listing.content[0]!,needSupplement:false,text:"Full article body",media:[
       {id:"body-image",kind:"image",sourceUrl:"https://cdn.example/body.jpg"}]} }));
   expect(result.post.thumbnailUrl).toBe("https://cdn.example/cover.jpg");
   expect(result.post.media.map(item => item.id)).toEqual(["body-image"]);
-  expect(result.fetchId).toBe("detail");
+  expect(result.fetchId).toBe(listing.fetchId);
+});
+
+
+it("retains completed media, cover, selection and receipt when a later page repeats a placeholder", async () => {
+  const session = new BulkSession();
+  const first = page(["a"], "next", 1);
+  first.content = [{ ...first.content[0]!, needSupplement: false, thumbnailUrl: "https://cdn.example/cover.jpg",
+    media: [{ id: "video", kind: "video", sourceUrl: "https://cdn.example/video.mp4" }] }];
+  await session.load(null, async () => first);
+  session.toggle("youtube:a");
+  const original = session.selected()[0];
+  const next = page(["a", "b"], null, 2);
+  next.content = next.content.map(post => ({ ...post, needSupplement: true }));
+  await session.load("next", async () => next);
+  expect(session.selected()[0]).toBe(original);
+  expect(session.rows()[0]).toMatchObject({ fetchId: "fetch-1", post: { needSupplement: false,
+    thumbnailUrl: "https://cdn.example/cover.jpg", media: [{id: "video"}] } });
+  expect(session.rows()).toHaveLength(2);
+  expect(session.usageReceipts()).toHaveLength(2);
+});
+
+it("allows an in-flight detail to finish when pagination repeats its post", async () => {
+  const session = new BulkSession();
+  const first = page(["a"], "next", 1);
+  first.content = first.content.map(post => ({ ...post, needSupplement: true }));
+  await session.load(null, async () => first);
+  let finish!: (value: import("@/workbench/types").PreviewResult) => void;
+  const pending = session.supplement("youtube:a", () => new Promise(resolve => { finish = resolve; }));
+  await session.load("next", async () => page(["a", "b"], null, 2));
+  finish({ fetchId: first.fetchId, demo: false, post: { ...first.content[0]!, needSupplement: false, text: "Full details" } });
+  await expect(pending).resolves.toMatchObject({ fetchId: first.fetchId, post: { text: "Full details" } });
+  expect(session.rows()[0]?.post.text).toBe("Full details");
+});
+
+
+describe("history restore", () => {
+  it("preserves the original result and receipt but cannot paginate or supplement", async () => {
+    const session = new BulkSession();
+    const original = { ...page(["a"], "next-original-page", 2), historyRestore: true };
+    original.content = original.content.map(post => ({ ...post, needSupplement: true }));
+    await session.load(null, async () => original);
+    expect(session.rows()[0]).toMatchObject({ fetchId: "fetch-2", historyRestore: true, usage: original.usage });
+    expect(session.cursor()).toBeNull();
+    const upstream = vi.fn();
+    await expect(session.supplement("youtube:a", upstream)).rejects.toThrow("never requests new details");
+    expect(upstream).not.toHaveBeenCalled();
+  });
 });

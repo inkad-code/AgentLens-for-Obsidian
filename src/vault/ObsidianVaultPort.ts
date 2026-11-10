@@ -1,4 +1,5 @@
-import { publishDesktopMedia } from "./DesktopMediaDownloader";
+import { fingerprintBytes, type MediaFingerprint } from "./MediaFingerprint";
+import { desktopIoDelay, publishDesktopMedia, fingerprintDesktopMedia } from "./DesktopMediaDownloader";
 import type { DownloadedMediaFile } from "./DownloadedMedia";
 import { normalizePath, TFile, FileSystemAdapter, type App } from "obsidian";
 import type { VaultFileRef, VaultPort } from "./VaultWriter";
@@ -25,6 +26,7 @@ export class ObsidianVaultPort implements VaultPort {
   }
 
   async ensureFolder(path: string): Promise<void> {
+    if (path === "") return;
     const normalized = normalizePath(path);
     let current = "";
     for (const segment of normalized.split("/")) {
@@ -42,6 +44,16 @@ export class ObsidianVaultPort implements VaultPort {
     });
   }
 
+  async fingerprintMedia(path: string): Promise<MediaFingerprint | undefined> {
+    const file = this.getFile(path);
+    if (!file) return undefined;
+    const adapter = this.app.vault.adapter;
+    if (adapter instanceof FileSystemAdapter) return fingerprintDesktopMedia(adapter.getBasePath(), normalizePath(path));
+    const resolved = this.requireFile(file);
+    if (resolved.stat.size > 50 * 1024 * 1024) return undefined;
+    return fingerprintBytes(await this.app.vault.readBinary(resolved));
+  }
+
   async createBinary(path: string, data: ArrayBuffer): Promise<VaultFileRef> {
     return this.app.vault.createBinary(normalizePath(path), data);
   }
@@ -55,7 +67,7 @@ export class ObsidianVaultPort implements VaultPort {
     for (let attempt = 0; attempt < 100; attempt++) {
       const registered = this.getFile(normalized);
       if (registered) return registered;
-      await new Promise(resolve => window.setTimeout(resolve, 50));
+      await desktopIoDelay(50);
     }
     throw new Error("Attachment was written but Vault registration is pending. Check the file before retrying.");
   }
@@ -64,7 +76,7 @@ export class ObsidianVaultPort implements VaultPort {
     const prefix = `${normalizePath(folderPath).replace(/\/$/, "")}/`;
     const indexedPaths = (await this.stateStore?.load())?.noteKeysByPath ?? {};
     const candidates = this.app.vault.getMarkdownFiles()
-      .filter((file) => file.path.startsWith(prefix))
+      .filter((file) => folderPath === "" ? !file.path.includes("/") : file.path.startsWith(prefix))
       .sort((left, right) => left.path.localeCompare(right.path));
     for (const file of candidates) {
       if (await this.matchesAgentLensKey(file, contentKey, sourceUrl, indexedPaths)) return file;

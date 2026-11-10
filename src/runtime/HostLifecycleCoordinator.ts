@@ -6,6 +6,7 @@ export interface HostLifecycleHandlers {
 
 export class HostLifecycleCoordinator {
   private started = false;
+  private lastTickAt = 0;
   private onlineListener: (() => void) | undefined;
   private focusListener: (() => void) | undefined;
   private visibilityListener: (() => void) | undefined;
@@ -13,7 +14,7 @@ export class HostLifecycleCoordinator {
 
   constructor(
     private readonly handlers: HostLifecycleHandlers,
-    private readonly isActive: () => boolean = () => document.visibilityState === "visible"
+    private readonly isActive: () => boolean = () => true
   ) {}
 
   start(registerInterval: (id: number) => number, intervalMs = 60_000): void {
@@ -21,7 +22,9 @@ export class HostLifecycleCoordinator {
     this.started = true;
     this.tickIfActive("service_start");
     this.intervalId = window.setInterval(() => {
-      this.tickIfActive("periodic_tick");
+      const now = Date.now();
+      const reason = this.lastTickAt && now - this.lastTickAt > intervalMs * 2 ? "host_activated" : "periodic_tick";
+      this.tickIfActive(reason);
     }, intervalMs);
     registerInterval(this.intervalId);
     this.onlineListener = () => {
@@ -52,6 +55,7 @@ export class HostLifecycleCoordinator {
 
   private tickIfActive(reason: HostTickReason): void {
     if (!this.isActive()) return;
+    this.lastTickAt = Date.now();
     void this.handlers.onTick(reason);
   }
 }

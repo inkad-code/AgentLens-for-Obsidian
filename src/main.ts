@@ -1,6 +1,14 @@
+import {TFolder} from "obsidian";
+import { DiagnosticLog, enableDiagnostics } from "./diagnostics/log";
+import { InstallationRecoveryModal } from "./ui/InstallationRecoveryModal";
+import { openDeviceLocalExecutionState } from "./runtime/DeviceLocalExecutionState";
+import { createLegacyOwnershipVerifier } from "./runtime/LegacyOwnershipBootstrap";
+import { OperationStore } from "./auto-fetch/operation-store";
 import { DesktopMediaDownloader } from "./vault/DesktopMediaDownloader";
 import { SINGLE_FETCH_REVIEW } from "./core/releaseProfile";
-import { addIcon, apiVersion, MarkdownView, Notice, Platform, Plugin } from "obsidian";
+import { addIcon, apiVersion, CapacitorAdapter, FileSystemAdapter, MarkdownView, Notice, Platform, Plugin } from "obsidian";
+import { MobileExecutionTarget } from "./vault/MobileExecutionTarget";
+import { desktopExecutionTarget } from "./vault/DesktopExecutionTarget";
 import { DEFAULT_SETTINGS, AgentLensSettingTab, normalizeAgentLensSettings, type AgentLensSettings } from "./settings";
 import { HostLifecycleCoordinator } from "./runtime/HostLifecycleCoordinator";
 import { WorkbenchView, WORKBENCH_VIEW_TYPE } from "./ui/WorkbenchView";
@@ -54,15 +62,13 @@ function dataUrlToIconContent(dataUrl: string): string {
 
 export default class AgentLensPlugin extends Plugin {
   agentlensSettings: AgentLensSettings = DEFAULT_SETTINGS;
+  private stopped = false;
   private openingWorkbench: Promise<void> | undefined;
   private workbenchService!: AgentLensWorkbenchService;
   private latestState?: Readonly<AgentLensPluginState>;
   private unsubscribeState?: (() => void) | undefined;
   private readonly connectivity = new ConnectivityGate();
-  private readonly stateStore = new PluginStateStore({
-    loadData: () => this.loadData(),
-    saveData: (data) => this.saveData(data)
-  });
+  private stateStore!: PluginStateStore;
   private coordinator = new HostLifecycleCoordinator({
     onTick: async (reason) => {
       if (SINGLE_FETCH_REVIEW || !this.workbenchService) return;
@@ -70,23 +76,45 @@ export default class AgentLensPlugin extends Plugin {
       try {
         await this.workbenchService.runScheduled(reason);
       } catch {
-        // Scheduler failures remain server-authoritative and are surfaced by the
-        // next reconcile in Auto-Fetch. Never leak source URLs or tokens to logs.
+        // Durable task evidence is retained for the next recovery pass.
+        // Never leak source URLs or tokens to logs.
       }
     }
   });
 
+  private readonly diagnosticLog = new DiagnosticLog();
+
   async onload(): Promise<void> {
+    if (!SINGLE_FETCH_REVIEW) enableDiagnostics(this.diagnosticLog);
     let ribbonIconName = AGENTLENS_RIBBON_ICON;
     try {
       addIcon(ribbonIconName, dataUrlToIconContent(ribbonLogo));
     } catch {
       addIcon(ribbonIconName, AGENTLENS_RIBBON_ICON_CONTENT);
     }
-    this.unsubscribeState = this.stateStore.subscribe((state) => { this.latestState = state; });
-    const state = await this.stateStore.load();
-    await this.loadSettings();
-    const api = new AgentLensApiClient(
+    const mobileTarget = this.app.vault.adapter instanceof CapacitorAdapter
+      ? new MobileExecutionTarget(this.app, this.app.vault.adapter, `${this.app.vault.configDir}/plugins/${this.manifest.id}`) : undefined;
+    const executionTarget = async () => {
+      const identity = this.app.vault.adapter instanceof FileSystemAdapter
+        ? await desktopExecutionTarget(this.app.vault.adapter.getBasePath()) : await mobileTarget?.resolve();
+      if (!identity) return undefined;
+      return {...identity, createFolder: async (path: string) => {
+        const adapter = this.app.vault.adapter;
+        const base = adapter instanceof FileSystemAdapter ? adapter.getBasePath() : undefined;
+        let prefix = "";
+        for (const segment of path.split("/").filter(Boolean)) {
+          if (this.app.vault.adapter !== adapter || (adapter instanceof FileSystemAdapter && adapter.getBasePath() !== base)) throw new Error("The Vault changed.");
+          prefix = prefix ? `${prefix}/${segment}` : segment;
+          const existing = this.app.vault.getAbstractFileByPath(prefix);
+          if (!existing) await this.app.vault.createFolder(prefix);
+          else if (!(existing instanceof TFolder)) throw new Error("A file blocks the configured folder.");
+        }
+        return {id: `vault:${path}`, path};
+      }, name: this.app.vault.getName(), folders: [{id: "vault:", path: ""},
+        ...this.app.vault.getAllFolders().filter(folder => folder.path !== "/" && folder.path !== "").map(folder => ({id: `vault:${folder.path}`, path: folder.path}))]};
+    };
+    const target = await executionTarget();
+    const createApi = (installationId: string) => new AgentLensApiClient(
       new ObsidianRequestUrlTransport(
         process.env.AGENTLENS_API_BASE_URL ?? apiTargets.production,
         undefined,
@@ -95,42 +123,84 @@ export default class AgentLensPlugin extends Plugin {
         apiVersion
 ),
       {
-        installationId: state.installationId,
-        deviceId: `obsidian-${state.installationId}`,
+        installationId,
+        ...(target ? { targetId: target.targetId } : {}),
+        deviceId: `obsidian-${installationId}`,
         clientVersion: this.manifest.version,
         obsidianVersion: apiVersion,
         platform: currentPlatform()
       }
 );
+    const secrets = new SecretTokenStore(this.app.secretStorage);
+    const openExecution = (startNew = false) => openDeviceLocalExecutionState(this.app, {
+      loadData: () => this.loadData(),
+      saveData: data => this.saveData(data)
+    }, createLegacyOwnershipVerifier(secrets, createApi), undefined, startNew);
+    let execution: Awaited<ReturnType<typeof openExecution>> | undefined;
+    try { execution = await openExecution(); }
+    catch (error) {
+      execution = await new Promise(resolve => {
+        const modal = new InstallationRecoveryModal(this.app, error, openExecution, resolve);
+        this.register(() => modal.dispose());
+        modal.open();
+      });
+    }
+    if (!execution || this.stopped) return;
+    this.stateStore = execution.stateStore;
+    this.unsubscribeState = this.stateStore.subscribe(state => { this.latestState = state; });
+    const state = await this.stateStore.load();
+    await this.loadSettings();
+    const api = createApi(state.installationId);
     const verification = new HumanVerification(
       url => window.open(url, "_blank", "noopener,noreferrer"),
       new URL(process.env.AGENTLENS_API_BASE_URL ?? apiTargets.production).origin
 );
-    this.registerObsidianProtocolHandler("agentlens-human-verification", params => verification.receive(params));
     this.register(() => verification.dispose());
+    let verificationHandlerRegistered = false;
     const auth = new AuthService(
       api,
       new ObsidianRefreshTokenPersistence(
         this.stateStore,
-        new SecretTokenStore(this.app.secretStorage)
+        secrets
 ),
       () => Date.now(),
-      signal => verification.request(signal)
+      async signal => {
+        if (this.stopped || signal.aborted) throw new Error("Human verification was cancelled.");
+        if (!verificationHandlerRegistered) {
+          this.registerObsidianProtocolHandler("agentlens-human-verification", params => verification.receive(params));
+          verificationHandlerRegistered = true;
+        }
+        return verification.request(signal);
+      }
 );
+
     const createVaultWriter = (options: {
       folderPath?: string | undefined;
       mediaPolicy?: AgentLensSettings["defaultMediaPolicy"] | undefined;
       templateId?: AgentLensSettings["defaultTemplateId"] | undefined;
     } = {}) => this.createVaultWriter(options);
+    const loadRecoveryPolicy = async () => {
+      const epoch = auth.sessionEpoch();
+      const token = await auth.accessToken();
+      if (!token) throw new Error("Sign in to use Obsidian media download recovery.");
+      const policy = await api.mediaRecoveryPolicy(token);
+      if (auth.sessionEpoch() !== epoch) throw new Error("The download session changed.");
+      return policy;
+    };
     this.workbenchService = new AgentLensWorkbenchService(
       auth,
       api,
       createVaultWriter(),
       this.stateStore,
       () => crypto.randomUUID(),
-      Platform.isMobile ? new ObsidianMediaDownloader(mediaDownloadLimit(true)) : new DesktopMediaDownloader(),
-      createVaultWriter
-);
+      Platform.isMobile ? new ObsidianMediaDownloader(mediaDownloadLimit(true), undefined, loadRecoveryPolicy)
+        : new DesktopMediaDownloader(undefined, undefined, undefined, undefined, loadRecoveryPolicy),
+      createVaultWriter,
+      undefined,
+      new OperationStore(execution.operationNamespace),
+      executionTarget
+    );
+
 
     this.registerView(WORKBENCH_VIEW_TYPE, leaf => new WorkbenchView(leaf, this.workbenchService, this.workbenchDefaults()));
 
@@ -202,6 +272,10 @@ export default class AgentLensPlugin extends Plugin {
   }
 
   onunload(): void {
+    this.workbenchService?.cancelManualSaves();
+    this.stopped = true;
+    enableDiagnostics(undefined);
+    void this.diagnosticLog.flush();
 
     this.coordinator.stop();
     this.unsubscribeState?.();

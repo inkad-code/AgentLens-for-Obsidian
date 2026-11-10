@@ -45,6 +45,20 @@ describe("Durable recovery handoff", () => {
     expect(await store.getOrCreateRemoteAction("single:url", "single")).toEqual(first);
   });
 
+  it.each(["invalid JSON", "unexpected response shape"])("retains the paid request after %s across restart", async reason => {
+    const { store, state } = fixture();
+    const first = await store.getOrCreateRemoteAction("single:url", "single");
+    await expect(store.runRemoteAction("single:url", "single", async () => {
+      throw new AgentLensError("invalid_response", reason, false, 200);
+    })).rejects.toThrow(reason);
+    const restarted = new DurableActionStore(state, () => "replacement");
+    await restarted.runRemoteAction("single:url", "single", async action => {
+      expect(action).toEqual(first);
+      return "replayed existing result";
+    });
+    expect((await state.load()).pendingActions).toHaveLength(0);
+  });
+
   it("atomically replaces completed write intents with a replayable receipt", async () => {
     const { state, store } = fixture();
     const completed = await store.prepareWrite(preview, options, request, "write-1");
@@ -86,4 +100,27 @@ describe("Durable recovery handoff", () => {
     await store.queueCallback(request, "receipt-0");
     expect(await store.pendingCallbacks()).toHaveLength(500);
   });
+});
+
+it("allocates a stable sequence at admission and retains it through paging, delivery, and restart", async () => {
+  const { state, store } = fixture();
+  const lease = { creatorId: "creator", leaseId: "first", trigger: "normal", saveFolderPath: "Research",
+    noteTemplateId: "default", mediaPolicy: "link_only", schedulerState: "due", nextCheckAt: null } as const;
+  const first = await store.prepareSchedulerCheckpoint("account", lease);
+  const duplicate = await store.prepareSchedulerCheckpoint("account", lease);
+  expect(first.sequence).toBe(1);
+  expect(duplicate.sequence).toBe(1);
+  const restarted = new DurableActionStore(state, () => "next-id");
+  const second = await restarted.prepareSchedulerCheckpoint("account", { ...lease, leaseId: "second" });
+  expect(second.sequence).toBe(2);
+  const continued = await restarted.advanceSchedulerCheckpoint(first, "page-2");
+  expect(continued?.sequence).toBe(1);
+  const delivery = await restarted.queueSchedulerDelivery(continued!, {
+    creatorId: "creator", leaseId: "first", fetchRunId: "first", fetchId: "page-2", previews: [],
+    cursor: null, hasMore: false, coverageComplete: true, truncated: false, requestId: "r", stopReason: "done"
+  }, lease, "periodic_tick");
+  expect(delivery.sequence).toBe(1);
+  await restarted.advanceSchedulerCheckpoint(continued!, null);
+  const third = await restarted.prepareSchedulerCheckpoint("account", { ...lease, leaseId: "third" });
+  expect(third.sequence).toBe(3);
 });

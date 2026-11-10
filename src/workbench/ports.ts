@@ -1,3 +1,5 @@
+import type { ManualSaveOptions } from "./types";
+import type { DownloadProgress, ImportTaskPort } from "./ImportTasks";
 import type { ScheduleHistoryPage } from "../api/scheduleHistory";
 import type {
   AccountSummary,
@@ -35,6 +37,17 @@ import type { PluginUiPreferences } from "../runtime/PluginStateStore";
 import type { BillingPort } from "../api/billing";
 
 export interface AgentLensApiPort {
+  reportDestinationFailure?(token: string, input: {creatorId: string; operationId: string; trigger: string; plan?: import("../api/scheduleHistory").OperationPlan}): Promise<unknown>;
+  sharedSettings?(token: string): Promise<import("../api/shared-settings").SharedSettings[]>;
+  adoptSharedFolder?(token: string, input: {followId: string; targetId: string; pathRevision: number; folderId: string}): Promise<unknown>;
+  restoreHistory?(accessToken: string, fetchId: string): Promise<FetchPage>;
+  registerDestination?(token: string, input: import("../api/nativeDestinations").DestinationRegistration): Promise<unknown>;
+  pendingDestinations?(token: string, targetId: string): Promise<import("../api/nativeDestinations").DestinationBinding[]>;
+  adoptDestination?(token: string, binding: import("../api/nativeDestinations").DestinationBinding): Promise<unknown>;
+  deleteAccountFollowCommand?(accessToken: string, followId: string, idempotencyKey: string): Promise<void>;
+  patchAccountFollow?(accessToken: string, followId: string, patch: import("../runtime/FollowConfigurationOutbox").FollowConfigurationPatch, idempotencyKey: string): Promise<void>;
+  followChanges?(accessToken: string, after?: number, through?: number): Promise<import("../api/followSync").FollowChangePage>;
+  supplementContent?(accessToken: string, fetchId: string, post: import("../core/domain").NormalizedPost): Promise<import("../core/domain").NormalizedPost>;
   demoFetch?(mode: "single_post" | "profile_page", cursor?: string | null): Promise<FetchPage>;
   billing?(accessToken: string): BillingPort;
   unfollowAccount(accessToken: string, followId: string): Promise<void>;
@@ -71,8 +84,10 @@ export interface AgentLensApiPort {
 }
 
 export interface MediaDownloaderPort {
+  readonly streaming?: boolean;
   readonly refreshOnFailure?: boolean;
-  download(media: NormalizedMedia, signal?: AbortSignal): Promise<import("../vault/DownloadedMedia").DownloadedMedia>;
+  readonly waitForTransferSlot?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
+  download(media: NormalizedMedia, signal?: AbortSignal, onProgress?: (progress: DownloadProgress) => void, lease?: import("../runtime/TransferPool").TransferLease): Promise<import("../vault/DownloadedMedia").DownloadedMedia>;
 }
 
 export interface SessionWorkbenchPort {
@@ -82,7 +97,7 @@ export interface SessionWorkbenchPort {
   authState(): Readonly<AuthState>;
   clientVersion(): string;
   subscribeAuth(listener: (state: Readonly<AuthState>) => void): () => void;
-  restoreAuth(): Promise<AuthState>;
+  restoreAuth(force?: boolean): Promise<AuthState>;
   cancelPendingSignIn?(): Promise<void>;
   startSignIn(provider?: "google", intent?: import("../auth/AuthService").DeviceAuthorizationIntent): Promise<AuthState>;
   requestPasswordReset?(email: string): Promise<string>;
@@ -92,6 +107,7 @@ export interface SessionWorkbenchPort {
   publicPlatformCatalog?(): Promise<PublicPlatformCatalog>;
   capabilities(): Promise<AccountCapabilities>;
   account(): Promise<AccountSummary>;
+  subscribeAccountChanges?(listener: () => void): () => void;
   uiPreferences?(): Promise<PluginUiPreferences>;
   setUiPreferences?(patch: Readonly<PluginUiPreferences>): Promise<void>;
 }
@@ -106,18 +122,35 @@ export interface SingleWorkbenchPort {
   clientVersion(): string;
   previewSingle(url: string): Promise<PreviewResult>;
   planPreview(preview: PreviewResult, options?: WriteOptions): Promise<NoteWriteManifest>;
-  savePrepared(prepared: readonly PreparedSave[], onProgress?: ((contentKey: string, status: string) => void)): Promise<BatchSaveResult>;
+  savePrepared(prepared: readonly PreparedSave[], onProgress?: ((contentKey: string, status: string) => void), options?: ManualSaveOptions): Promise<BatchSaveResult>;
 }
 
 export interface BulkWorkbenchPort {
+  restoreHistory?(fetchId: string): Promise<FetchPage>;
+  supplementContent?(preview: PreviewResult): Promise<PreviewResult>;
   previewSingle(url: string): Promise<PreviewResult>;
   clientVersion(): string;
   fetchProfilePage(url: string, cursor: string | null): Promise<FetchPage>;
   planPreview(preview: PreviewResult, options?: WriteOptions): Promise<NoteWriteManifest>;
-  savePrepared(prepared: readonly PreparedSave[], onProgress?: ((contentKey: string, status: string) => void)): Promise<BatchSaveResult>;
+  savePrepared(prepared: readonly PreparedSave[], onProgress?: ((contentKey: string, status: string) => void), options?: ManualSaveOptions): Promise<BatchSaveResult>;
 }
 
 export interface AutoFetchWorkbenchPort {
+  subscribeFollowConfiguration?(listener: (ids: string[]) => void): () => void;
+  queueFollowDeletion?(followId: string): Promise<string>;
+  queueFollowConfiguration?(followId: string, patch: import("../runtime/FollowConfigurationOutbox").FollowConfigurationPatch): Promise<string>;
+  exportLocalDiagnostics?(): Promise<import("../diagnostics/export").DiagnosticPackage>;
+  autoFetchTaskHistory?(creatorId: string, folderPath: string, after?: { sequence: number }): Promise<import("../auto-fetch/operation-store").TaskHistoryPage>;
+  autoFetchTaskDetail?(creatorId: string, folderPath: string, operationId: string, after?: { pageNumber: number }): Promise<import("../auto-fetch/operation-store").TaskDetailPage | undefined>;
+  refreshAutoFetchCreators?(creators: readonly CreatorRecord[]): Promise<readonly CreatorRecord[]>;
+  autoFetchActivity?(creatorId: string, folderPath?: string): import("./AutoFetchActivity").AutoFetchActivity;
+  subscribeAutoFetchActivity?(listener: () => void): () => void;
+  importTasks?: ImportTaskPort["importTasks"];
+  importTaskHistory?: ImportTaskPort["importTaskHistory"];
+  subscribeImportTasks?: ImportTaskPort["subscribeImportTasks"];
+  cancelImportTask?: ImportTaskPort["cancelImportTask"];
+  retryImportTask?: ImportTaskPort["retryImportTask"];
+
   unfollowAccount(followId: string): Promise<void>;
   accountFollows(): Promise<readonly AccountFollow[]>;
   scheduleHistory(followId: string, afterRevision?: number, throughRevision?: number): Promise<ScheduleHistoryPage>;

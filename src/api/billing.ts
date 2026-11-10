@@ -1,5 +1,8 @@
+import apiTargets from "../../api-targets.json";
+
 export type BillingPlan = "basic" | "pro" | "ultra" | "mega";
 export type BillingCycle = "monthly" | "yearly";
+export type PaymentMethod = "card" | "wallet";
 export interface BillingPlanConfig { plan: BillingPlan; priceMonthly: number; priceYearly: number; creditsLimit: number; active: boolean }
 export interface BillingDashboard {
   plan: BillingPlan;
@@ -14,6 +17,7 @@ export interface BillingDashboard {
   cancelAtPeriodEnd?: boolean;
   includedCreditsBalance?: number;
   addonCreditsBalance?: number;
+  oneTimePurchase?: boolean;
 }
 export interface PurchaseSelection { itemType: "subscription" | "addon"; plan?: BillingPlan; billingCycle?: BillingCycle; addonCredits?: number }
 export interface PurchaseIntent { id: string; displayedAmount: number; currency: string; checkoutStatus: string }
@@ -23,7 +27,9 @@ export interface BillingPort {
   dashboard(): Promise<BillingDashboard>;
   createIntent(selection: PurchaseSelection): Promise<PurchaseIntent>;
   intent(id: string): Promise<PurchaseIntent>;
-  checkout(id: string): Promise<{ checkoutUrl: string; status: string }>;
+  paymentOptions?(plan: BillingPlan, cycle: BillingCycle): Promise<{ walletAvailable: boolean }>;
+  pendingCheckout?(): Promise<PendingCheckout | null>;
+  checkout(id: string, paymentMethod?: PaymentMethod, confirmation?: CheckoutConfirmation): Promise<{ checkoutUrl: string; status: string }>;
   change(action: "upgrade" | "schedule-change", plan: BillingPlan, billingCycle: BillingCycle): Promise<BillingChange>;
   portal(): Promise<{ portalUrl: string }>;
   subscription(action: "cancel-at-period-end" | "cancel-scheduled-change" | "resume"): Promise<void>;
@@ -34,6 +40,7 @@ export function billingAction(dashboard: BillingDashboard, plan: BillingPlan, cy
   if (!active) return plan === "basic" ? "unavailable" : "checkout";
   if (dashboard.scheduledPlan === plan && dashboard.scheduledBillingCycle === cycle) return "scheduled";
   if (dashboard.plan === plan && dashboard.billingCycle === cycle) return "current";
+  if (dashboard.oneTimePurchase) return "unavailable";
   if (dashboard.plan === "basic") return plan === "basic" ? "current" : "checkout";
   const rank = (value: BillingPlan) => ["basic", "pro", "ultra", "mega"].indexOf(value);
   const upgrade = (rank(plan) > rank(dashboard.plan) && cycle === dashboard.billingCycle)
@@ -85,6 +92,7 @@ export function validateDashboard(value: unknown): BillingDashboard {
     scheduledEffectiveAt: nullableText(data.scheduledEffectiveAt), checkoutStatus: nullableText(data.checkoutStatus),
     subscriptionTermEndsAt: nullableText(data.subscriptionTermEndsAt),
     cancelAtPeriodEnd: data.cancelAtPeriodEnd === true,
+    oneTimePurchase: data.oneTimePurchase === true,
     ...(data.includedCreditsBalance == null ? {} : { includedCreditsBalance: amount(data.includedCreditsBalance) }),
     ...(data.addonCreditsBalance == null ? {} : { addonCreditsBalance: amount(data.addonCreditsBalance) }),
     fetchReason: data.entitlement == null ? null : nullableText(record(record(data.entitlement).fetchEligibility).reason)
@@ -96,10 +104,50 @@ export function validateIntent(value: unknown): PurchaseIntent {
 }
 export function validateChange(value: unknown): BillingChange {
   const data = record(value);
-  return { status: text(data.status), invoiceUrl: nullableText(data.invoiceUrl), effectiveAt: nullableText(data.effectiveAt) };
+  const invoiceUrl = nullableText(data.invoiceUrl);
+  return { status: text(data.status), invoiceUrl: invoiceUrl ? secureBillingUrl(invoiceUrl, "invoice") : null, effectiveAt: nullableText(data.effectiveAt) };
 }
-export function secureBillingUrl(value: unknown): string {
+
+const billingOrigins = {
+  checkout: "https://checkout.stripe.com",
+  invoice: "https://invoice.stripe.com",
+  portal: "https://billing.stripe.com"
+} as const;
+export function secureBillingUrl(value: unknown, purpose: keyof typeof billingOrigins): string {
   const url = new URL(text(value));
-  if (url.protocol !== "https:" || url.username || url.password) throw new Error("Invalid billing URL.");
+  const checkoutFallback = purpose === "checkout" && url.pathname === "/dashboard/plan-billing"
+    && url.origin === new URL(process.env.AGENTLENS_API_BASE_URL ?? apiTargets.production).origin;
+  if (url.protocol !== "https:" || url.username || url.password || (url.origin !== billingOrigins[purpose] && !checkoutFallback)) {
+    throw new Error("Invalid billing URL.");
+  }
   return url.toString();
+}
+
+
+export interface CheckoutConfirmation { requestKey: string; replacesOrderId?: string; confirmed?: boolean; confirmedAmount?: number; currency?: string }
+export interface CheckoutReplacement { oldOrderId: string; intentId: string; plan: BillingPlan; billingCycle: BillingCycle; paymentMethod: PaymentMethod; amount: number; currency: string; requestKey: string }
+export interface PendingCheckout { intentId: string; plan: BillingPlan; billingCycle: BillingCycle; paymentMethod: PaymentMethod; amount: number; currency: string; requestKey: string }
+export function validatePendingCheckout(value: unknown): PendingCheckout | null {
+  const data = record(value).pending;
+  if (data == null) return null;
+  const item = record(data);
+  if (item.paymentMethod !== "card" && item.paymentMethod !== "wallet") throw new Error("Invalid payment method.");
+  return { intentId: text(item.intentId), plan: plan(item.plan), billingCycle: cycle(item.billingCycle), paymentMethod: item.paymentMethod, amount: amount(item.amount), currency: text(item.currency), requestKey: text(item.requestKey) };
+}
+export function checkoutReplacement(value: unknown, intent: PurchaseIntent, selection: PurchaseSelection, method?: PaymentMethod): CheckoutReplacement {
+  const item = record(value);
+  if (item.intentId !== intent.id || item.plan !== selection.plan || item.billingCycle !== selection.billingCycle
+      || item.paymentMethod !== (method ?? "card") || item.amount !== intent.displayedAmount || item.currency !== intent.currency)
+    throw new Error("The checkout selection changed. Review it before continuing.");
+  return { oldOrderId: text(item.oldOrderId), intentId: intent.id, plan: plan(item.plan), billingCycle: cycle(item.billingCycle), paymentMethod: method ?? "card", amount: amount(item.amount), currency: text(item.currency), requestKey: text(item.requestKey) };
+}
+export function replacementDescription(replacement: CheckoutReplacement): string {
+  const planName = replacement.plan[0]!.toUpperCase() + replacement.plan.slice(1);
+  const period = replacement.billingCycle === "yearly" ? "year" : "month";
+  const currency = replacement.currency === "USD" ? "US$" : `${replacement.currency} `;
+  const price = currency + new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(replacement.amount);
+  const terms = replacement.paymentMethod === "wallet"
+    ? ` for one ${period} · No automatic renewal`
+    : `/${period} subscription · Renews automatically`;
+  return `New order: ${planName} - ${price}${terms}`;
 }

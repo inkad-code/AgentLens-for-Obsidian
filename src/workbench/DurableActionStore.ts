@@ -1,4 +1,5 @@
-import type { SchedulerLease, WriteResultsRequest } from "../api/AgentLensApiClient";
+import { persistedPost } from "../core/persistedPost";
+import type { CreatorUpdatePage, SchedulerLease, WriteResultsRequest } from "../api/AgentLensApiClient";
 import type { MediaPolicy, PendingAction } from "../core/domain";
 import { AgentLensError } from "../core/errors";
 import { redactPersistentUrl } from "../core/urls";
@@ -9,6 +10,7 @@ import type { PreviewResult } from "./types";
 const MAX_PENDING_ACTIONS = 500;
 
 export interface SchedulerCheckpoint {
+  sequence?: number | undefined;
   id: string;
   manualStart?: boolean;
   attempted?: boolean;
@@ -22,6 +24,16 @@ export interface SchedulerCheckpoint {
   idempotencyKey: string;
 }
 
+export interface SchedulerDelivery {
+  sequence?: number | undefined;
+  id: string;
+  accountId: string;
+  installationId: string;
+  page: CreatorUpdatePage;
+  lease: SchedulerLease;
+  reason: string;
+}
+
 export interface RemoteAction {
   id: string;
   operationKey: string;
@@ -30,6 +42,7 @@ export interface RemoteAction {
 }
 
 export interface PendingCallback {
+  statisticsRecorded?: boolean | undefined;
   id: string;
   request: WriteResultsRequest;
   idempotencyKey: string;
@@ -77,7 +90,10 @@ export class DurableActionStore {
         if (!selected) throw new Error("Stored scheduler continuation is invalid; recovery requires reconciliation.");
         return;
       }
-      selected = { id, attempted: false, accountId, installationId: state.installationId, lease: structuredClone(lease), cursor, pageNumber,
+      const sequence = (state.schedulerSequence ?? 0) + 1;
+      if (!Number.isSafeInteger(sequence)) throw new Error("Scheduler sequence is exhausted.");
+      state.schedulerSequence = sequence;
+      selected = { id, sequence, attempted: false, accountId, installationId: state.installationId, lease: structuredClone(lease), cursor, pageNumber,
         requestId: this.createId(), idempotencyKey: manualStart ? `creator-manual-${lease.leaseId}` : `auto-${lease.leaseId}-${pageNumber}`,
         ...(manualStart ? { manualStart: true } : {}) };
       state.pendingActions.push({ id, kind: "scheduler_checkpoint", createdAt: new Date().toISOString(), payload: selected });
@@ -127,6 +143,34 @@ export class DurableActionStore {
     return next;
   }
 
+  async queueSchedulerDelivery(checkpoint: SchedulerCheckpoint, page: CreatorUpdatePage, lease: SchedulerLease,
+    reason: string): Promise<SchedulerDelivery> {
+    const delivery: SchedulerDelivery = { id: `delivery:${checkpoint.id}:${checkpoint.pageNumber}`,
+      sequence: checkpoint.sequence,
+      accountId: checkpoint.accountId, installationId: checkpoint.installationId, page: {
+        ...page, previews: page.previews.map(post => sanitizePreviewForPersistence({ post, fetchId: page.fetchId, demo: false }).post)
+      }, lease, reason };
+    await this.stateStore.update(state => {
+      if (state.installationId !== checkpoint.installationId) throw new Error("The destination changed before saving the page.");
+      if (!state.pendingActions.some(action => action.id === delivery.id)) {
+        state.pendingActions.push({ id: delivery.id, kind: "scheduler_delivery", createdAt: new Date().toISOString(), payload: delivery });
+        trimPendingActions(state);
+      }
+    });
+    return { ...delivery, page }; // Current signed links stay in memory; persisted links follow the existing retention policy.
+  }
+
+  async schedulerDeliveries(accountId: string): Promise<SchedulerDelivery[]> {
+    const state = await this.stateStore.load();
+    return state.pendingActions.flatMap(action => {
+      if (action.kind !== "scheduler_delivery") return [];
+      const value = action.payload as SchedulerDelivery;
+      if (!value || value.id !== action.id || !value.page || !Array.isArray(value.page.previews) || !value.lease)
+        throw new Error("Stored Auto-Fetch delivery is invalid. Recovery evidence was retained.");
+      return value.accountId === accountId && value.installationId === state.installationId ? [value] : [];
+    });
+  }
+
   async runRemoteAction<T>(
     operationKey: string,
     idempotencyPrefix: string,
@@ -139,7 +183,11 @@ export class DurableActionStore {
       await this.remove([action.id]);
       return result;
     } catch (error) {
-      if (!options.retainIdentityOnFailure && error instanceof AgentLensError && !error.retryable && error.execution?.failureClass !== "reconciliation_required") await this.remove([action.id]);
+      // A malformed success response may already have consumed credits. Keep the
+      // original request identity so a later attempt can only replay that result.
+      if (!options.retainIdentityOnFailure && error instanceof AgentLensError && !error.retryable
+          && error.code !== "invalid_response" && error.execution?.failureClass !== "reconciliation_required")
+        await this.remove([action.id]);
       throw error;
     }
   }
@@ -157,7 +205,7 @@ export class DurableActionStore {
       id: this.createId(),
       kind: "result_callback",
       createdAt: new Date().toISOString(),
-      payload: { request, idempotencyKey }
+      payload: { request, idempotencyKey, statisticsRecorded: true }
     };
     await this.stateStore.update((state) => {
       const completed = new Set(completedWriteIds);
@@ -312,7 +360,7 @@ function parseCallback(action: PendingAction): Omit<PendingCallback, "id"> | nul
   if (!isRecord(action.payload)) return null;
   const { request, idempotencyKey } = action.payload;
   if (!isWriteResultsRequest(request) || typeof idempotencyKey !== "string") return null;
-  return { request, idempotencyKey };
+  return { request, idempotencyKey, ...(action.payload.statisticsRecorded === true ? { statisticsRecorded: true } : {}) };
 }
 
 function parseSchedulerCheckpoint(action: PendingAction): SchedulerCheckpoint | null {
@@ -324,6 +372,7 @@ function parseSchedulerCheckpoint(action: PendingAction): SchedulerCheckpoint | 
     || (p.cursor !== null && (typeof p.cursor !== "string" || !p.cursor))
     || typeof p.requestId !== "string" || !p.requestId || typeof p.idempotencyKey !== "string" || !p.idempotencyKey
     || !isRecord(p.lease)) return null;
+  if (p.sequence !== undefined && (!Number.isSafeInteger(p.sequence) || Number(p.sequence) < 1)) return null;
   if (p.manualStart !== undefined && (typeof p.manualStart !== "boolean" || (p.manualStart && p.pageNumber !== 1))) return null;
   if (p.attempted !== undefined && typeof p.attempted !== "boolean") return null;
   if (p.terminal !== undefined && (!isRecord(p.terminal)
@@ -379,20 +428,9 @@ function isWriteOptions(value: unknown): value is PendingWrite["options"] {
     && (value.saveAsCopy === undefined || typeof value.saveAsCopy === "boolean");
 }
 
-function sanitizePreviewForPersistence(preview: PreviewResult): PreviewResult {
-  return {
-    ...preview,
-    post: {
-      ...preview.post,
-      media: preview.post.media.map((media) => ({
-        ...media,
-        downloadHeaders: undefined,
-        sourceUrl: redactPersistentUrl(media.sourceUrl, media.downloadUrlExpiresAt),
-        ...(media.thumbnailUrl ? { thumbnailUrl: redactPersistentUrl(media.thumbnailUrl, media.thumbnailExpiresAt) } : {}),
-        ...(media.coverUrl ? { coverUrl: redactPersistentUrl(media.coverUrl) } : {})
-      }))
-    }
-  };
+export function sanitizePreviewForPersistence(preview: PreviewResult): PreviewResult {
+  return { ...preview, post: persistedPost(preview.post) };
+
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

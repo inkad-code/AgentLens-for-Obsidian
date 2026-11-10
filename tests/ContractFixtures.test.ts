@@ -39,7 +39,7 @@ describe("frozen Obsidian API fixtures", () => {
 
     const updatesClient = new AgentLensApiClient(new FixtureTransport(fixture("creator-updates")), identity);
     const updates = await updatesClient.manualCreatorUpdates("access", "creator-1", "request", "idem");
-    expect(updates).toMatchObject({ leaseId: "manual-run-1", coverageComplete: true, hasMore: false });
+    expect(updates).toMatchObject({ leaseId: "manual-run-1", coverageComplete: true, hasMore: false, chargedUnits: 1 });
   });
 
   it("validates the authoritative Activity page fixture", async () => {

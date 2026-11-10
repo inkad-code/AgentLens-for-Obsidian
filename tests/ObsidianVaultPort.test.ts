@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { TFile, type App } from "obsidian";
+import { FileSystemAdapter, TFile, type App } from "obsidian";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ObsidianVaultPort } from "@/vault/ObsidianVaultPort";
 import type { PluginStateStore } from "@/runtime/PluginStateStore";
 
@@ -12,6 +15,29 @@ function fixture(content: string, properties: Record<string, unknown>) {
   } as unknown as App;
   return { port: new ObsidianVaultPort(app), file, properties };
 }
+
+it("recognizes a published desktop attachment without waiting on a renderer timer", async () => {
+  const vault = await mkdtemp(join(tmpdir(), "agentlens-registration-"));
+  const source = join(vault, "source.part");
+  const bytes = new Uint8Array([1, 2, 3]);
+  const attachment = new TFile();
+  attachment.path = "attachment.jpg";
+  const getAbstractFileByPath = vi.fn().mockReturnValueOnce(null).mockReturnValue(attachment);
+  const adapter = Object.assign(new FileSystemAdapter(), { getBasePath: () => vault });
+  const port = new ObsidianVaultPort({ vault: { adapter, getAbstractFileByPath } } as unknown as App);
+  const rendererTimer = vi.spyOn(window, "setTimeout");
+  try {
+    await writeFile(source, bytes);
+    await expect(port.importMediaFile(attachment.path, {
+      kind: "file", path: source, sizeBytes: bytes.length, sha256: "", cleanup: async () => {}
+    })).resolves.toBe(attachment);
+    expect(await readFile(join(vault, attachment.path))).toEqual(Buffer.from(bytes));
+    expect(rendererTimer.mock.calls.some(([, milliseconds]) => milliseconds === 50)).toBe(false);
+  } finally {
+    rendererTimer.mockRestore();
+    await rm(vault, { recursive: true, force: true });
+  }
+});
 
 describe("Vault template metadata migration", () => {
   it("finds a moved note by hidden stable identity after public properties are cleaned", async () => {

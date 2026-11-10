@@ -1,5 +1,11 @@
+import { hasAsciiControl } from "../core/controlCharacters";
+import {validateSharedSettings} from "./shared-settings";
+import { pinterestBoardUrl } from "../core/pinterest-board";
+import type { CreatorLocalStatus } from "../auto-fetch/creator-status";
 import { SINGLE_FETCH_REVIEW } from "../core/releaseProfile";
-import { validateHistoryRange, validateScheduleHistory, type ScheduleHistoryPage } from "./scheduleHistory";
+import { validateMediaRecoveryPolicy, type MediaRecoveryPolicy } from "../core/mediaRecoveryPolicy";
+import { validateHistoryRange, validateScheduleHistory, type ScheduleHistoryPage, type OperationPlan } from "./scheduleHistory";
+import { validateFollowChanges, type FollowChangePage } from "./followSync";
 import { cleanPostText, cleanPostTitle } from "../core/domain";
 import { OBSIDIAN_PLUGIN_CLIENT_TYPE, type AuthApi, type EmailCredentials } from "../auth/AuthService";
 import type { DeviceAuthorization, DevicePollResult, AccountCapabilities, PublicPlatformCatalog } from "./contracts";
@@ -8,9 +14,10 @@ import type { MediaPolicy, NormalizedMedia, NormalizedPost } from "../core/domai
 import type { JsonTransport } from "../runtime/ObsidianRequestUrlTransport";
 import { executionInteger, validateExecution, validateRecovery } from "./executions";
 import type { ExecutionOperation, ExecutionRecovery } from "./executions";
-import { validatePlans, validateDashboard, validateIntent, validateChange, record, text, secureBillingUrl, type BillingPort } from "./billing";
+import { validatePendingCheckout, validatePlans, validateDashboard, validateIntent, validateChange, record, text, secureBillingUrl, type BillingPort } from "./billing";
 
 export interface AgentLensClientIdentity {
+  targetId?: string;
   installationId: string;
   deviceId: string;
   clientVersion: string;
@@ -37,6 +44,7 @@ export interface AccountSummary {
 }
 
 export interface FetchPage {
+  historyRestore?: boolean;
   fetchId: string;
   mode: "single_post" | "profile_page";
   platform: string;
@@ -45,7 +53,12 @@ export interface FetchPage {
   usage: { charged: boolean; units: number; remaining: number | null };
 }
 
+export interface MediaWriteResultInput {
+  mediaId: string;
+  status: "saved" | "reused" | "linked" | "failed" | "unknown";
+}
 export interface WriteResultInput {
+  media?: readonly MediaWriteResultInput[];
   contentKey: string;
   notePath: string;
   status: "success" | "partial" | "failed" | "skipped";
@@ -53,6 +66,7 @@ export interface WriteResultInput {
 }
 
 export interface WriteResultsRequest {
+  writeAttemptId?: string | undefined;
   fetchId?: string | undefined;
   creatorId?: string | undefined;
   fetchRunId?: string | undefined;
@@ -150,7 +164,16 @@ export interface AccountFollow {
 }
 
 export interface CreatorRecord {
+  targetId?: string | undefined;
+  localStatus?: CreatorLocalStatus | undefined;
+  configRevision?: number | undefined;
+  activationAt?: string | undefined;
+  scheduleAnchorAt?: string | undefined;
+  lastSuccessfulCheckAt?: string | null;
+  runState?: string | undefined;
   followId?: string | undefined;
+  /** Server-persisted product migration identity; never inferred from creator URLs. */
+  legacyFollowId?: string | undefined;
   creatorId: string;
   platform: string;
   profileUrl: string;
@@ -205,6 +228,7 @@ export interface CreatorParseResult {
 }
 
 export interface SchedulerLease {
+  plan?: OperationPlan | undefined;
   creatorId: string;
   leaseId: string;
   trigger: string;
@@ -239,6 +263,13 @@ export interface DeleteCreatorResult {
 }
 
 export interface CreatorUpdatePage {
+  deliveryItemKey?: string;
+  deliveryDeferredMedia?: readonly import("../core/mediaFailure").MediaFailureEvidence[];
+  deliveryItemCount?: number;
+  serverCheckedAt?: string | undefined;
+  chargedUnits?: number | undefined;
+  usage?: { units: number } | undefined;
+
   creatorId: string;
   leaseId: string;
   fetchRunId: string;
@@ -262,12 +293,21 @@ export class AgentLensApiClient implements AuthApi {
       dashboard: () => get("/me/dashboard", validateDashboard),
       createIntent: selection => post("/billing/purchase-intents", { ...selection, sourcePage: "obsidian/plans" }, validateIntent),
       intent: id => get(`/billing/purchase-intents/${encodeURIComponent(id)}`, validateIntent),
-      checkout: intentId => post("/billing/checkout", { intentId }, value => {
+      paymentOptions: (plan, billingCycle) => get(`/billing/payment-options?plan=${encodeURIComponent(plan)}&billingCycle=${encodeURIComponent(billingCycle)}`, value => {
         const data = record(value);
-        return { checkoutUrl: secureBillingUrl(data.checkoutUrl), status: text(data.status) };
+        if (typeof data.walletAvailable !== "boolean") throw new Error("Invalid payment availability.");
+        return { walletAvailable: data.walletAvailable };
+      }),
+      pendingCheckout: async () => {
+        try { return await get("/billing/checkout/pending", validatePendingCheckout); }
+        catch (cause) { if (cause && typeof cause === "object" && "status" in cause && cause.status === 404) return null; throw cause; }
+      },
+      checkout: (intentId, paymentMethod, confirmation) => post("/billing/checkout", { intentId, ...(paymentMethod ? { paymentMethod } : {}), ...confirmation }, value => {
+        const data = record(value);
+        return { checkoutUrl: secureBillingUrl(data.checkoutUrl, "checkout"), status: text(data.status) };
       }),
       change: (action, plan, billingCycle) => post(`/billing/subscriptions/${action}`, { plan, billingCycle }, validateChange),
-      portal: () => post("/billing/portal", {}, value => ({ portalUrl: secureBillingUrl(record(value).portalUrl) })),
+      portal: () => post("/billing/portal", {}, value => ({ portalUrl: secureBillingUrl(record(value).portalUrl, "portal") })),
       subscription: action => post(`/billing/subscriptions/${action}`, {}, value => { text(record(value).status); })
     };
   }
@@ -279,6 +319,11 @@ export class AgentLensApiClient implements AuthApi {
 
   currentClientVersion(): string {
     return this.identity.clientVersion;
+  }
+
+  mediaRecoveryPolicy(accessToken: string): Promise<MediaRecoveryPolicy> {
+    return this.data({ path: "/v1/plugins/media-policy?channel=plugin_center", accessToken,
+      installationId: this.identity.installationId }, value => validateMediaRecoveryPolicy(value, this.now()));
   }
 
   registrationRequirements(): Promise<{humanVerificationRequired: boolean}> {
@@ -325,7 +370,7 @@ export class AgentLensApiClient implements AuthApi {
       path: "/v1/auth/device/poll",
       method: "POST",
       body: { deviceCode }
-    }, (value) => validatePoll(value, this.now()));
+    }, (value) => validatePoll(value, this.now(), this.identity.installationId));
   }
 
   refresh(refreshToken: string): Promise<{ accessToken: string; expiresIn: number; refreshToken?: string | undefined }> {
@@ -333,7 +378,7 @@ export class AgentLensApiClient implements AuthApi {
       path: "/v1/auth/refresh",
       method: "POST",
       body: { refreshToken }
-    }, (value) => validateSession(value, this.now()));
+    }, (value) => validateSession(value, this.now(), this.identity.installationId));
   }
 
   async revoke(refreshToken: string): Promise<void> {
@@ -408,7 +453,7 @@ export class AgentLensApiClient implements AuthApi {
       path: "/v1/plugins/me",
       accessToken,
       installationId: this.identity.installationId
-    }, validateAccountSummary);
+    }, value => { validateInstallation(value, this.identity.installationId); return validateAccountSummary(value); });
   }
 
   demoFetch(mode: "single_post" | "profile_page", cursor?: string | null): Promise<FetchPage> {
@@ -419,12 +464,39 @@ export class AgentLensApiClient implements AuthApi {
     }, validateFetchPage);
   }
 
+  restoreHistory(accessToken: string, fetchId: string): Promise<FetchPage> {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(fetchId)) throw new Error("Enter the original list request ID.");
+    return this.data({ path: `/v1/plugins/content/history/${encodeURIComponent(fetchId)}`, method: "GET", accessToken,
+      installationId: this.identity.installationId
+    }, value => {
+      const page = validateFetchPage(value);
+      if (page.fetchId !== fetchId || page.mode !== "profile_page") throw new Error("The saved list identity does not match the original request.");
+      return { ...page, historyRestore: true };
+    });
+  }
+
+  supplementContent(accessToken: string, fetchId: string, post: NormalizedPost): Promise<NormalizedPost> {
+    return this.data({ path: "/v1/plugins/content/supplement", method: "POST", accessToken,
+      installationId: this.identity.installationId,
+      idempotencyKey: `supplement:${fetchId}:${post.contentId}`,
+      body: { fetchId, contentId: post.contentId }
+    }, value => {
+      const data = requireRecord(value);
+      const content = requireRecord(data.content);
+      if (data.fetchId !== fetchId || data.contentId !== post.contentId || content.contentId !== post.contentId)
+        throw new Error("The supplemented post does not match the selected post.");
+      return normalizeContent(content, { creatorId: post.author.id, displayName: post.author.displayName ?? post.author.id,
+        handle: post.author.handle, profileUrl: post.author.profileUrl }, post.platform);
+    });
+  }
+
   fetch(
     accessToken: string,
     input: { url: string; mode: "single_post" | "profile_page"; cursor?: string | undefined; pageSize?: number | undefined },
     idempotencyKey: string,
     requestId: string
   ): Promise<FetchPage> {
+    if (input.mode === "profile_page") input = { ...input, url: pinterestBoardUrl(input.url) };
     return this.data({
       path: "/v1/plugins/fetch",
       method: "POST",
@@ -512,6 +584,7 @@ export class AgentLensApiClient implements AuthApi {
   }
 
   parseCreator(accessToken: string, profileUrl: string, idempotencyKey: string): Promise<CreatorParseResult> {
+    profileUrl = pinterestBoardUrl(profileUrl, true);
     return this.data({
       path: "/v1/plugins/creators/parse",
       method: "POST",
@@ -549,9 +622,22 @@ export class AgentLensApiClient implements AuthApi {
         noteTemplateId: input.noteTemplateId,
         mediaPolicy: input.mediaPolicy,
         autoFetchEnabled: true,
-        creatorToken: input.parsed.creatorToken
+        creatorToken: input.parsed.creatorToken,
+        ...(this.identity.targetId ? { targetId: this.identity.targetId } : {})
       }
     }, validateCreator);
+  }
+
+  registerDestination(accessToken: string, input: import("./nativeDestinations").DestinationRegistration): Promise<unknown> {
+    return this.data({path: "/v1/plugins/auto-fetch-destinations", method: "PUT", accessToken, installationId: this.identity.installationId, body: input}, value => value);
+  }
+  async pendingDestinations(accessToken: string, targetId: string): Promise<import("./nativeDestinations").DestinationBinding[]> {
+    const {validateDestinationBindings} = await import("./nativeDestinations");
+    return this.data({path: `/v1/plugins/auto-fetch-destinations/pending?includeConfigurations=true&targetId=${encodeURIComponent(targetId)}`, accessToken, installationId: this.identity.installationId}, validateDestinationBindings);
+  }
+  adoptDestination(accessToken: string, binding: import("./nativeDestinations").DestinationBinding): Promise<unknown> {
+    return this.data({path: `/v1/plugins/auto-fetch-destinations/bindings/${encodeURIComponent(binding.bindingId)}/adopt`, method: "POST", accessToken,
+      installationId: this.identity.installationId, body: binding}, value => value);
   }
 
   listCreators(accessToken: string): Promise<readonly CreatorRecord[]> {
@@ -563,6 +649,24 @@ export class AgentLensApiClient implements AuthApi {
       if (!Array.isArray(value)) throw new Error("creators must be an array");
       return Object.freeze(value.map(validateCreator));
     });
+  }
+
+  reportDestinationFailure(accessToken: string, body: {creatorId: string; operationId: string; trigger: string; plan?: import("./scheduleHistory").OperationPlan}): Promise<unknown> {
+    return this.data({path: "/v1/plugins/follows/shared-settings/preflight-failure", method: "POST", accessToken, installationId: this.identity.installationId, body}, value => value);
+  }
+  sharedSettings(accessToken: string): Promise<import("./shared-settings").SharedSettings[]> {
+    return this.data({path: "/v1/plugins/follows/shared-settings", method: "GET", accessToken, installationId: this.identity.installationId}, validateSharedSettings);
+  }
+  adoptSharedFolder(accessToken: string, body: {followId: string; targetId: string; pathRevision: number; folderId: string}): Promise<unknown> {
+    return this.data({path: "/v1/plugins/follows/shared-settings/adoption", method: "POST", accessToken, installationId: this.identity.installationId, body}, value => value);
+  }
+  followChanges(accessToken: string, after = 0, through?: number): Promise<FollowChangePage> {
+    if (!Number.isSafeInteger(after) || after < 0 || (through !== undefined && (!Number.isSafeInteger(through) || through < after)))
+      throw new Error("Invalid configuration sync cursor.");
+    const query = new URLSearchParams({ afterEventId: String(after), limit: "100" });
+    if (through !== undefined) query.set("throughEventId", String(through));
+    return this.data({ path: `/v1/plugins/follow-sync?${query}`, method: "GET", accessToken,
+      installationId: this.identity.installationId }, value => validateFollowChanges(value, after, through));
   }
 
   updateCreator(accessToken: string, creatorId: string, enabled: boolean, idempotencyKey: string): Promise<CreatorRecord> {
@@ -669,7 +773,7 @@ export class AgentLensApiClient implements AuthApi {
             creatorId: requireString(item.creatorId, "lease.creatorId"),
             leaseId: requireString(item.leaseId, "lease.leaseId"),
             trigger: requireString(item.trigger, "lease.trigger"),
-            saveFolderPath: requireString(item.saveFolderPath, "lease.saveFolderPath"),
+            saveFolderPath: requireVaultFolder(item.saveFolderPath),
             noteTemplateId: requireTemplateId(item.noteTemplateId, "lease.noteTemplateId"),
             mediaPolicy: requireMediaPolicy(item.mediaPolicy, "lease.mediaPolicy"),
             schedulerState: requireString(item.schedulerState, "lease.schedulerState"),
@@ -702,6 +806,12 @@ export class AgentLensApiClient implements AuthApi {
       trigger: lease.trigger,
       ...(cursor ? { cursor } : {})
     });
+    if (lease.plan) {
+      query.set("configRevision", String(lease.plan.configRevision));
+      if (lease.plan.slotIndex !== undefined) query.set("slotIndex", String(lease.plan.slotIndex));
+      if (lease.plan.recoveryFrom !== undefined) query.set("recoveryFrom", lease.plan.recoveryFrom);
+      if (lease.plan.recoveryThrough !== undefined) query.set("recoveryThrough", lease.plan.recoveryThrough);
+    }
     return this.data({
       path: `/v1/plugins/creators/${encodeURIComponent(lease.creatorId)}/updates?${query}`,
       accessToken,
@@ -743,9 +853,23 @@ export class AgentLensApiClient implements AuthApi {
     }, validateFetchPage);
   }
 
-  async unfollowAccount(accessToken: string, followId: string): Promise<void> {
+  async patchAccountFollow(accessToken: string, followId: string, patch: import("../runtime/FollowConfigurationOutbox").FollowConfigurationPatch, idempotencyKey: string): Promise<void> {
+    await this.data({ path: `/v1/plugins/follows/${encodeURIComponent(followId)}`, method: "PATCH", accessToken,
+      installationId: this.identity.installationId, idempotencyKey, body: patch }, value => {
+      const row = requireRecord(value);
+      if (row.followId !== followId || !Number.isSafeInteger(row.configRevision) || Number(row.configRevision) < patch.configRevision)
+        throw new Error("Invalid authoritative follow acknowledgement.");
+      return undefined;
+    });
+  }
+
+  deleteAccountFollowCommand(accessToken: string, followId: string, idempotencyKey: string): Promise<void> {
+    return this.unfollowAccount(accessToken, followId, idempotencyKey);
+  }
+
+  async unfollowAccount(accessToken: string, followId: string, idempotencyKey?: string): Promise<void> {
     await this.data({ path: `/v1/plugins/follows/${encodeURIComponent(followId)}`, method: "DELETE", accessToken,
-      installationId: this.identity.installationId }, value => {
+      installationId: this.identity.installationId, ...(idempotencyKey ? { idempotencyKey } : {}) }, value => {
       if (requireRecord(value).removed !== true) throw new Error("Account follow removal was not confirmed.");
       return undefined;
     });
@@ -861,7 +985,7 @@ function activityQuery(
   }).toString();
 }
 
-function validatePoll(value: unknown, now: number): DevicePollResult {
+function validatePoll(value: unknown, now: number, installationId: string): DevicePollResult {
   const record = requireRecord(value);
   const status = requireString(record.status, "status");
   if (status === "authorization_pending") {
@@ -871,6 +995,7 @@ function validatePoll(value: unknown, now: number): DevicePollResult {
   if (status === "access_denied") return { status: "denied" };
   if (status === "expired_token") return { status: "expired" };
   if (status !== "authorized") throw new Error("unknown device authorization status");
+  validateInstallation(record, installationId);
   return {
     status: "authorized",
     accessToken: requireString(record.accessToken, "accessToken"),
@@ -907,8 +1032,14 @@ function validateAccountSummary(value: unknown): AccountSummary {
   };
 }
 
-function validateSession(value: unknown, now: number) {
+function validateInstallation(value: unknown, installationId: string): void {
   const record = requireRecord(value);
+  if (record.installationId !== installationId) throw new Error("Authentication response installation does not match this device.");
+}
+
+function validateSession(value: unknown, now: number, installationId: string) {
+  const record = requireRecord(value);
+  validateInstallation(record, installationId);
   return {
     accessToken: requireString(record.accessToken, "accessToken"),
     refreshToken: requireString(record.refreshToken, "refreshToken"),
@@ -955,7 +1086,11 @@ function normalizeContent(
   return {
     platform,
     contentId: requireString(content.contentId, "contentId"),
-    canonicalUrl: optionalString(source.canonicalUrl) ?? requireString(source.sourceUrl, "sourceUrl"),
+    tags: Array.isArray(content.tags) ? content.tags.map(tag => requireString(tag, "tags[]")) : undefined,
+    needSupplement: typeof content.needSupplement === "boolean" ? content.needSupplement : undefined,
+    supplementUrl: optionalString(content.supplementUrl),
+    thumbnailUrl: optionalString(content.previewUrl)?.trim(),
+    canonicalUrl: optionalString(source.canonicalUrl) ?? optionalString(source.sourceUrl) ?? "",
     title: cleanPostTitle(optionalString(text.title) ?? "") || undefined,
     text: cleanPostText(optionalString(text.caption) ?? optionalString(text.summary) ?? (SINGLE_FETCH_REVIEW ? undefined : optionalString(text.transcript)) ?? ""),
     summary: optionalString(text.summary),
@@ -1178,14 +1313,20 @@ function validateCreator(value: unknown): CreatorRecord {
     : [];
   return {
     ...validateSavedStatistics(record),
+    ...(record.configRevision !== undefined && record.configRevision !== null
+      ? { configRevision: executionInteger(record.configRevision, "configRevision") } : {}),
+    ...(optionalString(record.activationAt) ? { activationAt: optionalString(record.activationAt) } : {}),
+    ...(optionalString(record.scheduleAnchorAt) ? { scheduleAnchorAt: optionalString(record.scheduleAnchorAt) } : {}),
     ...(optionalString(record.followId) ? { followId: optionalString(record.followId) } : {}),
+    ...(optionalString(record.targetId) ? { targetId: optionalString(record.targetId) } : {}),
+    ...(optionalString(record.legacyFollowId) ? { legacyFollowId: optionalString(record.legacyFollowId) } : {}),
     creatorId: requireString(record.creatorId, "creatorId"),
     platform: requireString(record.platform, "platform"),
     profileUrl: requireString(record.profileUrl, "profileUrl"),
     displayName: requireString(record.displayName, "displayName"),
     handle: optionalString(record.handle) ?? null,
     avatarUrl: optionalString(record.avatarUrl) ?? null,
-    saveFolderPath: requireString(record.saveFolderPath, "saveFolderPath"),
+    saveFolderPath: requireVaultFolder(record.saveFolderPath),
     noteTemplateId: requireTemplateId(record.noteTemplateId, "noteTemplateId"),
     mediaPolicy: requireMediaPolicy(record.mediaPolicy, "mediaPolicy"),
     autoFetchEnabled: requireBoolean(record.autoFetchEnabled, "autoFetchEnabled"),
@@ -1198,6 +1339,8 @@ function validateCreator(value: unknown): CreatorRecord {
     preferredTimes: Object.freeze(preferredTimes),
     nextCheckAt: optionalString(record.nextCheckAt) ?? null,
     lastCheckedAt: optionalString(record.lastCheckedAt) ?? null,
+    lastSuccessfulCheckAt: optionalString(record.lastSuccessfulCheckAt) ?? null,
+    runState: optionalString(record.runState),
     lastUpdateAt: optionalString(record.lastUpdateAt) ?? null,
     lastResult: optionalString(record.lastResult) ?? null,
     lastError: optionalString(record.lastError) ?? null,
@@ -1274,12 +1417,16 @@ function validateCreatorUpdates(value: unknown): CreatorUpdatePage {
   const fetchRunId = requireString(record.fetchRunId, "fetchRunId");
   return {
     creatorId: requireString(record.creatorId, "creatorId"),
-    // A completed check intentionally clears activeJobId before the response is
-    // returned. fetchRunId remains stable and is the continuation identifier
-    // for any subsequent page, so it is also the safe completed-state fallback.
-    leaseId: optionalString(record.activeJobId) ?? fetchRunId,
+    // A concurrent automatic job can own activeJobId while this manual run
+    // returns. Receipts always belong to the response operation, not the card.
+    leaseId: fetchRunId,
     fetchRunId,
     fetchId: requireString(record.fetchId, "fetchId"),
+    ...(typeof record.serverCheckedAt === "string" && Number.isFinite(Date.parse(record.serverCheckedAt))
+      && record.serverCheckedAt.endsWith("Z") ? { serverCheckedAt: record.serverCheckedAt } : {}),
+    ...(page?.chargedUnits === undefined ? {} : { chargedUnits: requireNonNegativeNumber(page.chargedUnits, "page.chargedUnits") }),
+    ...(record.usage === undefined || record.usage === null ? {} : { usage: { units: requireNonNegativeNumber(requireRecord(record.usage).units, "usage.units") } }),
+
     previews: Object.freeze(previews),
     cursor: page === null ? null : optionalString(page.cursor) ?? null,
     hasMore: page === null ? false : requireBoolean(page.hasMore, "page.hasMore"),
@@ -1297,7 +1444,10 @@ function normalizeUpdateContent(content: Record<string, unknown>): NormalizedPos
   return {
     platform,
     contentId: requireString(content.contentId, "contentId"),
-    canonicalUrl: optionalString(source.canonicalUrl) ?? requireString(source.sourceUrl, "sourceUrl"),
+    tags: Array.isArray(content.tags) ? content.tags.map(tag => requireString(tag, "tags[]")) : undefined,
+    needSupplement: typeof content.needSupplement === "boolean" ? content.needSupplement : undefined,
+    supplementUrl: optionalString(content.supplementUrl),
+    canonicalUrl: optionalString(source.canonicalUrl) ?? optionalString(source.sourceUrl) ?? "",
     title: cleanPostTitle(optionalString(text.title) ?? "") || undefined,
     text: cleanPostText(optionalString(text.caption) ?? optionalString(text.summary) ?? (SINGLE_FETCH_REVIEW ? undefined : optionalString(text.transcript)) ?? ""),
     summary: optionalString(text.summary),
@@ -1373,4 +1523,10 @@ function stringRecord(value: unknown): Readonly<Record<string, string>> | undefi
   const entries = Object.entries(value as Record<string, unknown>);
   if (entries.some(([, item]) => typeof item !== "string")) return undefined;
   return Object.freeze(Object.fromEntries(entries) as Record<string, string>);
+}
+
+function requireVaultFolder(value: unknown): string {
+  if (typeof value !== "string" || value.startsWith("/") || value.includes("\\") || value.includes(":") || hasAsciiControl(value)
+      || value !== "" && value.split("/").some(part => !part || part === "." || part === "..")) throw new Error("Invalid Vault folder path.");
+  return value;
 }

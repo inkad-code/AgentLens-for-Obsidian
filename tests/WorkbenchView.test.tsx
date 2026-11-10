@@ -27,11 +27,13 @@ describe("native workbench view", () => {
   });
 
   it("keeps its pane mounted while notes and folders open in the host", async () => {
-    const noteLeaf = {openFile: vi.fn(async () => {})};
+    const rootSplit = {};
+    const noteLeaf = {getRoot: () => rootSplit, openFile: vi.fn(async () => {})};
+    const popoutNote = {getRoot: () => ({}), openFile: vi.fn(async () => {})};
     const fileLeaf = {view: {revealInFolder: vi.fn(async () => {})}};
     const app = {vault: {on: vi.fn(), getFiles: () => [], getName: () => "Test", getAllLoadedFiles: () => [],
       getAbstractFileByPath: (path: string) => path === "note.md" ? Object.assign(new TFile(), {path}) : Object.assign(new TFolder(), {path})},
-      workspace: {getLeavesOfType: (type: string) => type === "markdown" ? [noteLeaf] : [fileLeaf],
+      workspace: {rootSplit, getLeavesOfType: (type: string) => type === "markdown" ? [popoutNote, noteLeaf] : [fileLeaf],
         revealLeaf: vi.fn(async () => {}), getLeaf: vi.fn()}};
     const leaf = {app, detach: vi.fn()};
     const view = new WorkbenchView(leaf as unknown as WorkspaceLeaf, {cancelPendingSignIn: async () => {}} as AgentLensWorkbenchPort);
@@ -39,12 +41,43 @@ describe("native workbench view", () => {
     await act(() => view.onOpen());
     expect(view).toBeInstanceOf(ItemView);
     expect(document.querySelector('.modal-container')).toBeNull();
-    fireEvent.click(screen.getByText("Open saved note"));
+    await act(async () => {fireEvent.click(screen.getByText("Open saved note"));});
     expect(noteLeaf.openFile).toHaveBeenCalledWith(expect.objectContaining({path: "note.md"}), {active: true});
+    expect(app.workspace.revealLeaf).toHaveBeenCalledWith(noteLeaf);
+    expect(popoutNote.openFile).not.toHaveBeenCalled();
     await act(async () => {fireEvent.click(screen.getByText("Reveal folder"));});
     expect(app.workspace.revealLeaf).toHaveBeenCalledWith(fileLeaf);
     expect(leaf.detach).not.toHaveBeenCalled();
     expect(screen.getByText("Open saved note")).toBeVisible();
+    await act(() => view.onClose());
+    view.contentEl.remove();
+  });
+
+  it.each(["empty", "graph"])("opens saved notes in the main workspace when it only has a %s tab", async type => {
+    const rootSplit = {};
+    const mainTabs = {};
+    const mainLeaf = {parent: mainTabs, view: {getViewType: () => type}, openFile: vi.fn(async () => {})};
+    const newLeaf = {openFile: vi.fn(async () => {})};
+    const workspace = {
+      rootSplit,
+      getLeavesOfType: vi.fn(() => []),
+      getMostRecentLeaf: vi.fn(() => mainLeaf),
+      createLeafInParent: vi.fn(() => newLeaf),
+      revealLeaf: vi.fn(async () => {})
+    };
+    const file = Object.assign(new TFile(), {path: "note.md"});
+    const app = {workspace, vault: {on: vi.fn(), getFiles: () => [], getName: () => "Test",
+      getAllLoadedFiles: () => [], getAbstractFileByPath: () => file}};
+    const view = new WorkbenchView({app} as unknown as WorkspaceLeaf, {} as AgentLensWorkbenchPort);
+    document.body.appendChild(view.contentEl);
+    await act(() => view.onOpen());
+    await act(async () => {fireEvent.click(screen.getByText("Open saved note"));});
+    expect(workspace.getMostRecentLeaf).toHaveBeenCalledWith(rootSplit);
+    if (type === "empty") expect(workspace.createLeafInParent).not.toHaveBeenCalled();
+    else expect(workspace.createLeafInParent).toHaveBeenCalledWith(mainTabs, 0);
+    const target = type === "empty" ? mainLeaf : newLeaf;
+    expect(target.openFile).toHaveBeenCalledWith(file, {active: true});
+    expect(workspace.revealLeaf).toHaveBeenCalledWith(target);
     await act(() => view.onClose());
     view.contentEl.remove();
   });

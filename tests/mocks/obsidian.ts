@@ -128,3 +128,6 @@ export class ItemView {
 }
 
 export class TFolder { constructor(public path = "") {} }
+
+export class FileSystemAdapter {}
+export class CapacitorAdapter {}

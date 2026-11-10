@@ -27,6 +27,10 @@ export interface NormalizedMedia {
 }
 
 export interface NormalizedPost {
+  tags?: readonly string[] | undefined;
+  needSupplement?: boolean | undefined;
+  supplementUrl?: string | undefined;
+
   platform: string;
   contentId: string;
   canonicalUrl: string;
@@ -56,6 +60,11 @@ export function postListTitle(post: NormalizedPost): string {
 function validPostTitle(post: NormalizedPost): string {
   const title = cleanPostTitle(post.title ?? "");
   return title === post.contentId || /^(?:[a-f0-9]{24,}|gh_[a-f0-9]+)$/i.test(title) ? "" : title;
+}
+
+/** Listing excerpts are plain text; keep provider HTML in the post body for note rendering. */
+export function postListSummary(post: NormalizedPost): string {
+  return cleanPostTitle(post.text);
 }
 
 export function postThumbnailUrl(post: NormalizedPost): string | undefined {
@@ -130,7 +139,7 @@ export interface PersistedLedgerEntry {
 
 export interface PendingAction {
   id: string;
-  kind: "write_manifest" | "result_callback" | "media_retry" | "remote_action" | "scheduler_checkpoint";
+  kind: "write_manifest" | "result_callback" | "media_retry" | "remote_action" | "scheduler_checkpoint" | "scheduler_delivery";
   createdAt: string;
   payload: unknown;
 }
@@ -142,6 +151,7 @@ export function cleanPostText(text: string): string {
 
 /** Source hashtags belong in the note body; platform and creator belong in frontmatter. */
 export function postContentTags(post: NormalizedPost): string[] {
+  if (post.tags !== undefined) return [...new Set(post.tags)];
   const content = cleanPostText(post.body?.trim() || post.text.trim() || post.summary?.trim() || "");
   const sourceTags = [...content.matchAll(/(?:^|\s)#([\p{L}\p{N}_-]+)/gu)].map(match => match[1]!);
   const generatedTags = new Set([post.platform, creatorDisplayName(post.author)]

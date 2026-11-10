@@ -3,6 +3,7 @@ export interface DownloadedMediaFile {
   kind: "file";
   path: string;
   sizeBytes: number;
+  sha256?: string;
   cleanup(): Promise<void>;
 }
 export type DownloadedMedia = ArrayBuffer | DownloadedMediaFile;

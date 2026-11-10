@@ -18,8 +18,9 @@ export class AgentLensError extends Error {
     readonly status?: number | undefined,
     options?: ErrorOptions,
     readonly requestId?: string | undefined,
-    readonly execution?: { retryAt?: string | undefined; failureClass?: string | undefined; retryable?: boolean | undefined; chargedUnits?: number | undefined } | undefined,
-    readonly serverCode?: string | undefined
+    readonly execution?: { retryAt?: string | undefined; retryAfterSeconds?: number | undefined; failureClass?: string | undefined; retryable?: boolean | undefined; chargedUnits?: number | undefined } | undefined,
+    readonly serverCode?: string | undefined,
+    readonly details?: unknown
   ) {
     super(message, options);
     this.name = "AgentLensError";

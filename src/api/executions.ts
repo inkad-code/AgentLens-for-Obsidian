@@ -1,5 +1,6 @@
 /** Shared server evidence. Reading this contract never dispatches a fetch. */
 export interface ExecutionOperation {
+  jobs?: Array<{ status: string; retryable: boolean; retryCount: number; maxRetries: number }> | undefined;
   operationId: string;
   creatorId: string;
   runTrigger: string;
@@ -49,6 +50,7 @@ export function validateExecution(value: unknown, operationId: string, installat
     throw new Error("Invalid execution retryAt");
   }
   return {
+    ...(data.jobs !== undefined ? { jobs: parseJobs(data.jobs) } : {}),
     operationId, creatorId, runTrigger: text(data.runTrigger, "runTrigger"), sourceStatus: text(data.sourceStatus, "sourceStatus"),
     retryAt, latestPageNumber: executionInteger(data.latestPageNumber, "latestPageNumber"),
     nextPageCursor: nullableText(data.nextPageCursor, "nextPageCursor"), activePageCursor: nullableText(data.activePageCursor, "activePageCursor"),
@@ -65,4 +67,14 @@ export function validateRecovery(value: unknown, creatorId: string, operationId:
     throw new Error("Invalid recovery disposition");
   }
   return { operationId, creatorId, disposition, configRevision: executionInteger(data.configRevision, "configRevision") };
+}
+
+function parseJobs(value: unknown): NonNullable<ExecutionOperation["jobs"]> {
+  if (!Array.isArray(value)) throw new Error("Invalid execution jobs");
+  return value.map(item => {
+    const job = record(item);
+    if (typeof job.retryable !== "boolean") throw new Error("Invalid execution retry eligibility");
+    return { status: text(job.status, "job status"), retryable: job.retryable,
+      retryCount: executionInteger(job.retryCount, "retryCount"), maxRetries: executionInteger(job.maxRetries, "maxRetries") };
+  });
 }

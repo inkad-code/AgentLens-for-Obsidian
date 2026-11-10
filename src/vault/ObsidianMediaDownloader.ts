@@ -1,15 +1,26 @@
+import { MediaDownloadError } from "../core/mediaFailure";
+import { mediaRequestHeaders } from "./mediaRequestHeaders";
+import { withMedia403Recovery, type LoadMediaRecoveryPolicy } from "../runtime/media403Recovery";
+import type { DownloadProgress } from "../workbench/ImportTasks";
+
 import { requestUrl, type RequestUrlParam, type RequestUrlResponse } from "obsidian";
 import type { NormalizedMedia } from "../core/domain";
 
 type RequestUrlFn = (request: RequestUrlParam | string) => Promise<RequestUrlResponse>;
 
 export class ObsidianMediaDownloader {
+  readonly streaming = false;
   constructor(
     private readonly maxBytes: number,
-    private readonly send: RequestUrlFn = requestUrl
+    private readonly send: RequestUrlFn = requestUrl,
+    private readonly loadRecoveryPolicy?: LoadMediaRecoveryPolicy
 ) {}
 
-  async download(media: NormalizedMedia, signal?: AbortSignal): Promise<ArrayBuffer> {
+  async download(media: NormalizedMedia, signal?: AbortSignal, onProgress?: (progress: DownloadProgress) => void): Promise<ArrayBuffer> {
+    return withMedia403Recovery(media, candidate => this.downloadOnce(candidate, signal, onProgress), this.loadRecoveryPolicy, signal);
+  }
+
+  private async downloadOnce(media: NormalizedMedia, signal?: AbortSignal, onProgress?: (progress: DownloadProgress) => void): Promise<ArrayBuffer> {
     signal?.throwIfAborted();
     if (media.sizeBytes !== undefined && media.sizeBytes > this.maxBytes) {
       throw new Error(`Media exceeds the ${this.maxBytes} byte download limit.`);
@@ -17,17 +28,23 @@ export class ObsidianMediaDownloader {
     const response = await abortable(this.send({
       url: media.sourceUrl,
       method: "GET",
-      headers: { ...(media.downloadHeaders ?? {}) },
+      headers: mediaRequestHeaders(media),
       throw: false
+    }).catch((error: unknown) => {
+      signal?.throwIfAborted();
+      // Some host versions reject HTTP responses even with throw:false.
+      if (error && typeof error === "object" && "status" in error && error.status === 403) throw MediaDownloadError.http(403);
+      throw error;
     }), signal, 120_000);
     signal?.throwIfAborted();
     if (response.status < 200 || response.status >= 300) {
-      throw new Error(`Media download failed with HTTP ${response.status}.`);
+      throw MediaDownloadError.http(response.status);
     }
     if (response.arrayBuffer.byteLength > this.maxBytes) {
       throw new Error(`Media exceeds the ${this.maxBytes} byte download limit.`);
     }
     validateMediaResponse(response, media);
+    onProgress?.({ receivedBytes: response.arrayBuffer.byteLength, totalBytes: response.arrayBuffer.byteLength });
     return response.arrayBuffer;
   }
 }

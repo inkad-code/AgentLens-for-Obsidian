@@ -1,3 +1,4 @@
+import { MediaDownloadError } from "@/core/mediaFailure";
 import { describe, expect, it, vi } from "vitest";
 import type { NormalizedPost } from "@/core/domain";
 import { normalizeVaultRelativePath, renderNotePreview, VaultWriter, type VaultFileRef, type VaultPort } from "@/vault/VaultWriter";
@@ -50,6 +51,23 @@ const POST: NormalizedPost = {
 };
 
 describe("VaultWriter", () => {
+  it("writes and recovers notes in Vault root without an absolute path or invented directory", async () => {
+    const vault = new MemoryVault();
+    const ensure = vi.spyOn(vault, "ensureFolder");
+    const writer = new VaultWriter(vault, {folderPath: ""});
+    const manifest = await writer.plan(POST);
+    const mediaManifest = await writer.plan({...POST,media:[{id:"root-image",kind:"image",sourceUrl:"https://cdn.example/image.jpg"}]});
+    expect(mediaManifest.attachments[0]!.path).toMatch(/^attachments\//);
+    expect(manifest.notePath).not.toContain("/");
+    const saved = await writer.execute(manifest, POST.canonicalUrl);
+    expect(vault.files.has(saved.file.path)).toBe(true);
+    expect(ensure).not.toHaveBeenCalled();
+    const replay = await writer.plan(POST, {targetNotePath: saved.file.path});
+    expect(replay.notePath).toBe(saved.file.path);
+    await expect(writer.plan(POST, {targetNotePath: "Other/note.md"})).rejects.toThrow("outside");
+    await expect(new VaultWriter(vault, {folderPath: "../outside"}).plan(POST)).rejects.toThrow();
+  });
+
   it("uses the same cleaned title for a non-Zhihu note heading and filename", async () => {
     const writer = new VaultWriter(new MemoryVault(), { folderPath: "Research" });
     const manifest = await writer.plan({ ...POST, platform: "linkedin", title: "&lt;p&gt;A &amp; B&lt;/p&gt;" });
@@ -402,6 +420,122 @@ describe("VaultWriter", () => {
     expect(vault.files.get(retried.file.path)).not.toContain("## Media archive warnings");
   });
 
+  it.each(["https://cdn.example/video.mp4?quality=hd&part=1", "https://cdn.example/play?id=42"])("embeds a link-only video with controls and a source link without downloading: %s", async sourceUrl => {
+    const vault = new MemoryVault();
+    const createBinary = vi.spyOn(vault, "createBinary");
+    const download = vi.fn();
+    const writer = new VaultWriter(vault, { folderPath: "Inbox", mediaPolicy: "link_only" });
+    const post: NormalizedPost = { ...POST, media: [{ id: "video-1", kind: "video", sourceUrl }] };
+    const manifest = await writer.plan(post);
+    const result = await writer.execute(manifest, post.canonicalUrl, download);
+    const content = vault.files.get(result.file.path)!;
+    const document = new DOMParser().parseFromString(content, "text/html");
+    const video = document.querySelector("video")!;
+    expect(video.getAttribute("src")).toBe(sourceUrl);
+    expect(video.hasAttribute("controls")).toBe(true);
+    expect(video.hasAttribute("playsinline")).toBe(true);
+    expect(video.getAttribute("preload")).toBe("metadata");
+    expect(video.hasAttribute("poster")).toBe(false);
+    expect(video.hasAttribute("autoplay")).toBe(false);
+    expect(video.style.width).toBe("100%");
+    expect(content).toContain(`[source](${sourceUrl})`);
+    expect(renderNotePreview(post, manifest)).toContain("<video controls");
+    expect(manifest.attachments[0]?.action).toBe("link");
+    expect(result.attachments[0]?.status).toBe("linked");
+    expect(createBinary).not.toHaveBeenCalled();
+    expect(download).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { name: "video thumbnail", media: { thumbnailUrl: "https://cdn.example/thumb.jpg?width=640&height=360", coverUrl: "https://cdn.example/cover.jpg" }, expected: "https://cdn.example/thumb.jpg?width=640&height=360" },
+    { name: "video cover", media: { coverUrl: "https://cdn.example/cover.jpg" }, expected: "https://cdn.example/cover.jpg" },
+    { name: "expiring thumbnail falls back to cover", media: { thumbnailUrl: "https://cdn.example/private.jpg?opaque=secret", thumbnailExpiresAt: "2026-08-20T01:00:00Z", coverUrl: "https://cdn.example/cover.jpg" }, expected: "https://cdn.example/cover.jpg" },
+    { name: "invalid thumbnail falls back to cover", media: { thumbnailUrl: "javascript:alert(1)", coverUrl: "https://cdn.example/cover.jpg" }, expected: "https://cdn.example/cover.jpg" },
+    { name: "cover credentials are not persisted", media: { coverUrl: "https://user:secret@cdn.example/cover.jpg?token=secret&width=640#private" }, expected: "https://cdn.example/cover.jpg?width=640" },
+    { name: "invalid cover is omitted", media: { coverUrl: "javascript:alert(1)" }, expected: null },
+    { name: "expiring thumbnail without fallback is omitted", media: { thumbnailUrl: "https://cdn.example/private.jpg?opaque=secret", thumbnailExpiresAt: "2026-08-20T01:00:00Z" }, expected: null }
+  ])("uses a persistent link-only poster: $name", async ({ media, expected }) => {
+    const vault = new MemoryVault();
+    const download = vi.fn();
+    const createBinary = vi.spyOn(vault, "createBinary");
+    const writer = new VaultWriter(vault, { folderPath: "Inbox", mediaPolicy: "link_only" });
+    const post: NormalizedPost = { ...POST, media: [{ id: "video-1", kind: "video", sourceUrl: "https://cdn.example/video.mp4", ...media }] };
+    const manifest = await writer.plan(post);
+    const result = await writer.execute(manifest, post.canonicalUrl, download);
+    const markdown = vault.files.get(result.file.path)!;
+    for (const content of [markdown, renderNotePreview(post, manifest)]) {
+      const document = new DOMParser().parseFromString(content, "text/html");
+      const video = document.querySelector("video")!;
+      expect(video.getAttribute("poster")).toBe(expected);
+      expect(video.getAttribute("preload")).toBe("metadata");
+      expect(video.hasAttribute("autoplay")).toBe(false);
+      expect(content).not.toContain("secret");
+    }
+    expect(download).not.toHaveBeenCalled();
+    expect(createBinary).not.toHaveBeenCalled();
+  });
+
+  it("uses the post cover when a link-only video has no cover of its own", async () => {
+    const writer = new VaultWriter(new MemoryVault(), { folderPath: "Inbox", mediaPolicy: "link_only" });
+    const manifest = await writer.plan({ ...POST, thumbnailUrl: "https://cdn.example/post-cover.jpg", media: [{ id: "video-1", kind: "video", sourceUrl: "https://cdn.example/video.mp4" }] });
+    expect(manifest.renderedManagedBlock).toContain('poster="https://cdn.example/post-cover.jpg"');
+  });
+
+  it.each([
+    ["https://cdn.example/original.jpg?width=1280&height=720", "https://cdn.example/original.jpg?width=1280&height=720"],
+    ["https://cdn.example/photo(1).jpg", "https://cdn.example/photo%281%29.jpg"],
+    ["https://cdn.example/original.jpg?token=secret&width=640", "https://cdn.example/original.jpg?width=640"]
+  ])("embeds a link-only image and source link without downloading: %s", async (sourceUrl, expectedUrl) => {
+    const vault = new MemoryVault();
+    const createBinary = vi.spyOn(vault, "createBinary");
+    const download = vi.fn();
+    const writer = new VaultWriter(vault, { folderPath: "Inbox", mediaPolicy: "link_only" });
+    const post: NormalizedPost = { ...POST, media: [{ id: "image-1", kind: "image", sourceUrl: sourceUrl!, thumbnailUrl: "https://cdn.example/thumbnail.jpg" }] };
+    const manifest = await writer.plan(post);
+    const result = await writer.execute(manifest, post.canonicalUrl, download);
+    const content = vault.files.get(result.file.path)!;
+    expect(content).toContain(`![Media image](${expectedUrl}) ([source](${expectedUrl}))`);
+    expect(renderNotePreview(post, manifest)).toContain(`![Media image](${expectedUrl})`);
+    expect(content).not.toContain("thumbnail.jpg");
+    expect(content).not.toContain("secret");
+    expect(manifest.attachments[0]?.action).toBe("link");
+    expect(result.attachments[0]?.status).toBe("linked");
+    expect(createBinary).not.toHaveBeenCalled();
+    expect(download).not.toHaveBeenCalled();
+  });
+
+  it("keeps link-only article images inline without duplicating them in the Media section", async () => {
+    const sourceUrl = "https://cdn.example/original.jpg";
+    const writer = new VaultWriter(new MemoryVault(), { folderPath: "Inbox", mediaPolicy: "link_only" });
+    const manifest = await writer.plan({ ...POST, body: `<p>Before</p><img src="${sourceUrl}"><p>After</p>`, media: [{ id: "image-1", kind: "image", sourceUrl }] });
+    expect(manifest.renderedManagedBlock).toContain(`Before\n\n![Media image](${sourceUrl}) ([source](${sourceUrl}))\n\nAfter`);
+    expect(manifest.renderedManagedBlock.match(/!\[Media image\]/g)).toHaveLength(1);
+    expect(manifest.renderedManagedBlock).toContain("_Media embedded in the content above._");
+  });
+
+  it.each(["download_all", "download_images_only"] as const)("keeps local image embeds under %s", async mediaPolicy => {
+    const writer = new VaultWriter(new MemoryVault(), { folderPath: "Inbox", mediaPolicy });
+    const manifest = await writer.plan({ ...POST, media: [{ id: "image-1", kind: "image", sourceUrl: "https://cdn.example/original.jpg" }] });
+    expect(manifest.attachments[0]?.action).toBe("new");
+    expect(manifest.renderedManagedBlock).toContain("![[Inbox/attachments/");
+    expect(manifest.renderedManagedBlock).not.toContain("![Media image]");
+  });
+
+  it.each(["download_all", "download_images_only"] as const)("keeps the existing video output under %s", async mediaPolicy => {
+    const writer = new VaultWriter(new MemoryVault(), { folderPath: "Inbox", mediaPolicy });
+    const manifest = await writer.plan({ ...POST, media: [{ id: "video-1", kind: "video", sourceUrl: "https://cdn.example/video.mp4" }] });
+    expect(manifest.renderedManagedBlock).not.toContain("<video");
+    if (mediaPolicy === "download_all") expect(manifest.renderedManagedBlock).toContain("![[Inbox/attachments/");
+    else expect(manifest.renderedManagedBlock).toContain("- [source](https://cdn.example/video.mp4)");
+  });
+
+  it("does not embed a video with a non-web source", async () => {
+    const writer = new VaultWriter(new MemoryVault(), { folderPath: "Inbox", mediaPolicy: "link_only" });
+    const manifest = await writer.plan({ ...POST, media: [{ id: "video-1", kind: "video", sourceUrl: "javascript:alert(1)" }] });
+    expect(manifest.renderedManagedBlock).not.toContain("<video");
+    expect(manifest.renderedManagedBlock).toContain("video source unavailable");
+  });
+
   it("uses remote links without downloading under link-only policy", async () => {
     const vault = new MemoryVault();
     const writer = new VaultWriter(vault, { folderPath: "AgentLens/Inbox", mediaPolicy: "link_only" });
@@ -611,4 +745,232 @@ it("shows Downloading only during the write and replaces it with a local embed o
   expect(await vault.readText(file)).not.toContain("Downloading");
   expect(await vault.readText(file)).toContain(`![[${manifest.attachments[0]!.path}]]`);
   expect(result.ledger.completion).toBe("complete");
+});
+
+it("keeps recovery proof outside managed content so unchanged notes remain reusable", async () => {
+  const vault = new MemoryVault();
+  const savedAt = "2026-10-19T00:00:00.000Z";
+  const writer = new VaultWriter(vault, { folderPath: "Inbox", mediaPolicy: "link_only", now: () => new Date(savedAt) });
+  const manifest = await writer.plan(POST);
+  await writer.execute(manifest, POST.canonicalUrl, undefined, { recoveryId: "original-write" });
+  expect(await writer.recoveryEvidence("original-write", manifest)).toEqual({ savedAt });
+  expect(await writer.recoveryEvidence("unrelated-write", manifest)).toBeUndefined();
+  const replay = await writer.plan(POST);
+  expect(replay.action).toBe("skip");
+  await writer.execute(replay, POST.canonicalUrl, undefined, { recoveryId: "reuse-only" });
+  expect(await writer.recoveryEvidence("reuse-only", replay)).toBeUndefined();
+  expect(await writer.recoveryEvidence("original-write", manifest)).toEqual({ savedAt });
+});
+
+it("only confirms complete physical recovery evidence and performs no writes while inspecting it", async () => {
+  const vault = new MemoryVault();
+  const post = { ...POST, media: [{ id: "image", kind: "image" as const, sourceUrl: "https://cdn.example/image.png" }] };
+  const writer = new VaultWriter(vault, { folderPath: "Inbox", mediaPolicy: "download_all" });
+  const manifest = await writer.plan(post);
+  await writer.execute(manifest, post.canonicalUrl, async () => new ArrayBuffer(3), { recoveryId: "write-proof" });
+  const writeText = vi.spyOn(vault, "modifyText"), binary = vi.spyOn(vault, "createBinary");
+  expect(await writer.confirmRecovery("write-proof", manifest, post.canonicalUrl)).toMatchObject({ recovered: true,
+    ledger: { completion: "complete" }, attachments: [{ status: "saved" }] });
+  expect(await writer.confirmRecovery("other-proof", manifest, post.canonicalUrl)).toBeUndefined();
+  vault.files.delete(manifest.attachments[0]!.path);
+  expect(await writer.confirmRecovery("write-proof", manifest, post.canonicalUrl)).toBeUndefined();
+  expect(writeText).not.toHaveBeenCalled();
+  expect(binary).not.toHaveBeenCalled();
+});
+
+it("confirms cross-task reuse only with a complete receipt and matching physical files", async () => {
+  const vault = new MemoryVault();
+  const post = { ...POST, media: [{ id: "image", kind: "image" as const, sourceUrl: "https://cdn.example/image.png" }] };
+  const writer = new VaultWriter(vault, { folderPath: "Inbox", mediaPolicy: "download_all" });
+  const original = await writer.plan(post);
+  const written = await writer.execute(original, post.canonicalUrl, async () => new ArrayBuffer(3), { recoveryId: "another-task" });
+  const modify = vi.spyOn(vault, "modifyText"), binary = vi.spyOn(vault, "createBinary");
+  expect(await writer.confirmRecovery("original-task", original, post.canonicalUrl)).toBeUndefined();
+  expect(await writer.confirmReuse(original, written.ledger)).toMatchObject({ manifest: { action: "skip" }, attachments: [{ status: "skipped" }] });
+  expect(await writer.confirmReuse(original, { ...written.ledger, completion: "partial" })).toBeUndefined();
+  expect(await writer.confirmReuse(original, { ...written.ledger, notePath: "Other/post.md" })).toBeUndefined();
+  vault.files.delete(original.attachments[0]!.path);
+  expect(await writer.confirmReuse(original, written.ledger)).toBeUndefined();
+  expect(modify).not.toHaveBeenCalled(); expect(binary).not.toHaveBeenCalled();
+});
+
+it("keeps per-media failure facts distinct from text while preserving successful siblings", async () => {
+  const vault = new MemoryVault(), writer = new VaultWriter(vault, { folderPath: "Research" });
+  const post = { ...POST, media: ["saved", "expired", "temporary"].map(id => ({ id, kind: "image" as const, sourceUrl: `https://cdn.example/${id}.jpg` })) };
+  const manifest = await writer.plan(post);
+  const result = await writer.execute(manifest, post.canonicalUrl, async id => {
+    if (id === "expired") throw MediaDownloadError.http(403);
+    if (id === "temporary") throw new Error("Local expired handle; HTTP 403 is only text in this diagnostic");
+    return new ArrayBuffer(1);
+  });
+  expect(result.attachments).toEqual([
+    expect.objectContaining({ mediaId: "saved", status: "saved" }),
+    expect.objectContaining({ mediaId: "expired", status: "failed", failureKind: "source_expired" }),
+    expect.objectContaining({ mediaId: "temporary", status: "failed", failureKind: "retryable" })
+  ]);
+  expect(result.ledger.completion).toBe("partial");
+  const retry = await writer.plan(post);
+  expect(retry.attachments.find(item => item.mediaId === "saved")?.action).toBe("skip");
+});
+
+it("does not downgrade a confirmed desktop import when temporary download cleanup fails", async () => {
+  const vault = new MemoryVault();
+  const importMediaFile = vi.fn(async (path: string) => { vault.files.set(path, "<binary>"); return { path }; });
+  const writer = new VaultWriter(Object.assign(vault, { importMediaFile }), { folderPath: "Research" });
+  const post = { ...POST, media: [{ id: "image", kind: "image" as const, sourceUrl: "https://cdn.example/image.png" }] };
+  const manifest = await writer.plan(post);
+  const cleanup = vi.fn(async () => { throw new Error("temporary file locked"); });
+  const result = await writer.execute(manifest, post.canonicalUrl, async () => ({ kind: "file", path: "/temporary/download", sizeBytes: 1, cleanup }),
+    { recoveryId: "original-intent" });
+  expect(result.attachments[0]).toMatchObject({ mediaId: "image", status: "saved" });
+  expect(result.ledger.completion).toBe("complete");
+  expect(importMediaFile).toHaveBeenCalledTimes(1); expect(cleanup).toHaveBeenCalledTimes(1);
+  expect(await writer.confirmRecovery("original-intent", manifest, post.canonicalUrl)).toBeDefined();
+});
+
+it("persists exact attachment byte evidence before publishing and performs read-only verification", async () => {
+  const vault = new MemoryVault();
+  const fingerprint = { sizeBytes: 1, sha256: "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a" };
+  const readFingerprint = vi.fn(async () => fingerprint);
+  const writer = new VaultWriter(Object.assign(vault, { fingerprintMedia: readFingerprint }), { folderPath: "Research" });
+  const post = { ...POST, media: [{ id: "image", kind: "image" as const, sourceUrl: "https://cdn.example/image.png" }] };
+  const manifest = await writer.plan(post);
+  const publish = vi.spyOn(vault, "createBinary");
+  const prepare = vi.fn(async () => { expect(publish).not.toHaveBeenCalled(); });
+  await writer.execute(manifest, post.canonicalUrl, async () => new Uint8Array([1]).buffer, { recoveryId: "intent", prepareMediaPublication: prepare });
+  const evidence = { mediaId: "image", path: manifest.attachments[0]!.path, ...fingerprint };
+  expect(prepare).toHaveBeenCalledWith(evidence);
+  const before = publish.mock.calls.length;
+  expect(await writer.verifyMediaPublications(manifest, [evidence])).toEqual(["image"]);
+  readFingerprint.mockResolvedValueOnce({ ...fingerprint, sha256: "0".repeat(64) });
+  expect(await writer.verifyMediaPublications(manifest, [evidence])).toEqual([]);
+  expect(await writer.verifyMediaPublications(manifest, [{ ...evidence, path: "Other/file.png" }])).toEqual([]);
+  expect(publish).toHaveBeenCalledTimes(before);
+});
+
+it("does not publish attachment bytes when its durable publication intent cannot be saved", async () => {
+  const vault = new MemoryVault(), writer = new VaultWriter(vault, { folderPath: "Research" });
+  const post = { ...POST, media: [{ id: "image", kind: "image" as const, sourceUrl: "https://cdn.example/image.png" }] };
+  const publish = vi.spyOn(vault, "createBinary");
+  const manifest = await writer.plan(post);
+  const result = await writer.execute(manifest, post.canonicalUrl, async () => new ArrayBuffer(1),
+    { recoveryId: "intent", prepareMediaPublication: async () => { throw new Error("intent disk failure"); } });
+  expect(result.ledger.completion).toBe("partial");
+  expect(publish).not.toHaveBeenCalled();
+});
+
+it.each(["changed-body", "changed-bytes", "matching"] as const)("reconciles interrupted publication only with original body and byte proof: %s", async condition => {
+  const vault = new MemoryVault();
+  const digest = { sizeBytes: 1, sha256: "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a" };
+  const writer = new VaultWriter(Object.assign(vault, { fingerprintMedia: async () => condition === "changed-bytes" ? { ...digest, sha256: "0".repeat(64) } : digest }),
+    { folderPath: "Research" });
+  const post = { ...POST, media: ["one", "two"].map(id => ({ id, kind: "image" as const, sourceUrl: `https://cdn.example/${id}.png` })) };
+  const manifest = await writer.plan(post);
+  const publish = vi.spyOn(vault, "createBinary").mockImplementation(async path => { vault.files.set(path, "<binary>"); throw new Error("acknowledgement lost"); });
+  const evidence: import("@/vault/MediaFingerprint").MediaPublicationIntent[] = [];
+  await expect(writer.execute(manifest, post.canonicalUrl, async () => new Uint8Array([1]).buffer,
+    { recoveryId: "original", prepareMediaPublication: async item => { evidence.push(item); } })).rejects.toMatchObject({ serverCode: "WRITE_REQUIRES_RECONCILIATION" });
+  const text = vault.files.get(manifest.notePath)! + "\nKeep my own notes\n";
+  vault.files.set(manifest.notePath, condition === "changed-body" ? text.replace("Original summary", "User changed the body") : text);
+  const before = vault.files.get(manifest.notePath);
+  const result = await writer.reconcilePublications("original", manifest, evidence, post.canonicalUrl);
+  expect(publish).toHaveBeenCalledTimes(1);
+  if (condition !== "matching") {
+    expect(result).toBeUndefined(); expect(vault.files.get(manifest.notePath)).toBe(before); return;
+  }
+  expect(result).toMatchObject({ reconciled: true, ledger: { completion: "partial" }, attachments: [
+    { mediaId: "one", status: "saved" }, { mediaId: "two", status: "failed" }
+  ] });
+  expect(vault.files.get(manifest.notePath)).toContain("Keep my own notes");
+  const replay = await writer.reconcilePublications("original", manifest, evidence, post.canonicalUrl);
+  expect(replay?.ledger.writtenAt).toBe(result?.ledger.writtenAt);
+});
+
+it.each(["create", "frontmatter", "identity", "final-marker"])("retains unknown outcome when %s acknowledgement fails after a note mutation", async stage => {
+  const vault = new MemoryVault();
+  const writer = new VaultWriter(vault, { folderPath: "Research" });
+  const manifest = await writer.plan(POST);
+  const failure = new Error("host acknowledgement lost");
+  if (stage === "create") vi.spyOn(vault, "createText").mockImplementation(async (path, text) => { vault.files.set(path, text); throw failure; });
+  if (stage === "frontmatter") vi.spyOn(vault, "updateFrontmatter").mockRejectedValue(failure);
+  if (stage === "identity") vi.spyOn(vault, "recordNoteIdentity").mockRejectedValue(failure);
+  if (stage === "final-marker") vi.spyOn(vault, "modifyText").mockImplementation(async (file, text) => { vault.files.set(file.path, text); throw failure; });
+  await expect(writer.execute(manifest, POST.canonicalUrl, undefined, { recoveryId: "original" }))
+    .rejects.toMatchObject({ serverCode: "WRITE_REQUIRES_RECONCILIATION" });
+  expect(vault.files.size).toBe(1);
+  expect(vault.files.get(manifest.notePath)).toContain("agentlens:write:original");
+  if (stage === "final-marker") expect(await writer.confirmRecovery("original", manifest, POST.canonicalUrl)).toMatchObject({ recovered: true });
+});
+
+it("keeps pre-publication note path conflicts distinct from unknown physical writes", async () => {
+  const vault = new MemoryVault();
+  const writer = new VaultWriter(vault, { folderPath: "Research" });
+  const manifest = await writer.plan(POST);
+  vault.files.set(manifest.notePath, "User-owned note");
+  await expect(writer.execute(manifest, POST.canonicalUrl, undefined, { recoveryId: "original" }))
+    .rejects.toMatchObject({ code: "vault_conflict" });
+  expect(vault.files.get(manifest.notePath)).toBe("User-owned note");
+});
+
+it("recovers an unprepared original note only with explicit stage evidence and no unexplained media files", async () => {
+  const vault = new MemoryVault();
+  const post = { ...POST, media: [{ id: "image", kind: "image" as const, sourceUrl: "https://cdn.example/image" }] };
+  const writer = new VaultWriter(vault, { folderPath: "Research", mediaPolicy: "download_all" });
+  const manifest = await writer.plan(post);
+  const publish = vault.createText.bind(vault);
+  vi.spyOn(vault, "createText").mockImplementation(async (path, text) => { await publish(path, text); throw new Error("lost acknowledgement"); });
+  await expect(writer.execute(manifest, post.canonicalUrl, async () => new ArrayBuffer(1), { recoveryId: "original" })).rejects.toThrow();
+  const original = vault.files.get(manifest.notePath)!;
+  const recover = () => writer.reconcilePublications("original", manifest, [], post.canonicalUrl, { recoverUnpreparedNote: true });
+  expect(await writer.reconcilePublications("original", manifest, [], post.canonicalUrl)).toBeUndefined();
+  vault.files.set(manifest.attachments[0]!.path, "unproven bytes");
+  expect(await recover()).toBeUndefined();
+  vault.files.delete(manifest.attachments[0]!.path);
+  vault.files.set(manifest.notePath, original.replace("Original summary", "User changed source block"));
+  expect(await recover()).toBeUndefined();
+  vault.files.set(manifest.notePath, original + "\nUser notes stay\n");
+  expect(await recover()).toMatchObject({ recovered: true, reconciled: true, attachmentsNotStarted: true,
+    ledger: { completion: "partial" }, attachments: [{ mediaId: "image", status: "failed" }] });
+  expect(vault.frontmatter.get(manifest.notePath)).toMatchObject(manifest.frontmatter);
+  expect(vault.keysByPath.get(manifest.notePath)).toBe(manifest.contentKey);
+  expect(vault.files.get(manifest.notePath)).toContain("User notes stay");
+});
+
+it("does not start attachments before note-stage persistence succeeds", async () => {
+  const vault = new MemoryVault();
+  const post = { ...POST, media: [{ id: "image", kind: "image" as const, sourceUrl: "https://cdn.example/image" }] };
+  const writer = new VaultWriter(vault, { folderPath: "Research", mediaPolicy: "download_all" });
+  const download = vi.fn(async () => new ArrayBuffer(1));
+  await expect(writer.execute(await writer.plan(post), post.canonicalUrl, download, {
+    recoveryId: "original", notePrepared: async () => { throw new Error("intent persistence unavailable"); },
+  })).rejects.toMatchObject({ serverCode: "WRITE_REQUIRES_RECONCILIATION" });
+  expect(download).not.toHaveBeenCalled();
+});
+
+it("cleans late downloaded files without publishing them or finalizing notes after ownership changes", async () => {
+  const vault = new MemoryVault();
+  const post = { ...POST, media: [{ id: "image", kind: "image" as const, sourceUrl: "https://cdn.example/image" }] };
+  const writer = new VaultWriter(vault, { folderPath: "Research", mediaPolicy: "download_all" });
+  let current = true;
+  const cleanup = vi.fn(async () => {}), publish = vi.spyOn(vault, "createBinary"), modify = vi.spyOn(vault, "modifyText");
+  await expect(writer.execute(await writer.plan(post), post.canonicalUrl, async () => {
+    current = false;
+    return { kind: "file" as const, path: "/tmp/temporary-media", sizeBytes: 1, cleanup };
+  }, { recoveryId: "original", assertCurrent: () => { if (!current) throw new Error("Account changed"); } }))
+    .rejects.toMatchObject({ serverCode: "WRITE_REQUIRES_RECONCILIATION" });
+  expect(cleanup).toHaveBeenCalledTimes(1);
+  expect(publish).not.toHaveBeenCalled();
+  expect(modify).not.toHaveBeenCalled();
+  expect(vault.files.size).toBe(1);
+});
+
+it("checks ownership again after folder preparation and stops before creating the note", async () => {
+  const vault = new MemoryVault();
+  let current = true;
+  vi.spyOn(vault, "ensureFolder").mockImplementation(async () => { current = false; });
+  const writer = new VaultWriter(vault, { folderPath: "Research" });
+  await expect(writer.execute(await writer.plan(POST), POST.canonicalUrl, undefined, {
+    recoveryId: "original", assertCurrent: () => { if (!current) throw new Error("Account changed"); },
+  })).rejects.toThrow("Account changed");
+  expect(vault.files.size).toBe(0);
 });

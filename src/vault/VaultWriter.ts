@@ -1,3 +1,6 @@
+import { parallelEach, parallelBySize, transfer, type TransferLease, type TransferOptions } from "../runtime/TransferPool";
+import { fingerprintBytes, type MediaFingerprint, type MediaPublicationIntent } from "./MediaFingerprint";
+import { MediaDownloadError, MediaWriteUncertainError, NoteWriteUncertainError, type MediaFailureKind } from "../core/mediaFailure";
 import type { DownloadedMedia, DownloadedMediaFile } from "./DownloadedMedia";
 import type { MediaPolicy, NormalizedMedia, NormalizedPost, PersistedLedgerEntry } from "../core/domain";
 import { contentKey, mediaKey, cleanPostText, cleanPostTitle, creatorDisplayName, postContentTags, postDisplayTitle } from "../core/domain";
@@ -19,6 +22,7 @@ export interface VaultFileRef {
 
 export interface VaultPort {
   getFile(path: string): VaultFileRef | null;
+  fingerprintMedia?(path: string): Promise<MediaFingerprint | undefined>;
   readText(file: VaultFileRef): Promise<string>;
   createText(path: string, content: string): Promise<VaultFileRef>;
   modifyText(file: VaultFileRef, content: string): Promise<void>;
@@ -61,10 +65,13 @@ export interface AttachmentWriteManifest {
 }
 
 export interface VaultWriteResult {
+  recovered?: boolean | undefined;
+  reconciled?: boolean | undefined;
+  attachmentsNotStarted?: boolean | undefined;
   manifest: NoteWriteManifest;
   file: VaultFileRef;
   ledger: PersistedLedgerEntry;
-  attachments: ReadonlyArray<{ mediaId: string; path: string; status: "saved" | "skipped" | "linked" | "failed"; error?: string | undefined }>;
+  attachments: ReadonlyArray<{ mediaId: string; path: string; status: "saved" | "skipped" | "linked" | "failed"; failureKind?: MediaFailureKind; deferred?: boolean; error?: string | undefined }>;
 }
 
 type AttachmentWriteResult = VaultWriteResult["attachments"][number];
@@ -90,6 +97,18 @@ export interface NotePlanContext {
 }
 
 export interface VaultWriteContext {
+  mediaSize?: ((mediaId: string) => number | undefined) | undefined;
+  bufferedDownloads?: boolean | undefined;
+  waitForTransferSlot?: TransferOptions["waitForSlot"];
+  physicalWrite?: (<T>(work: () => Promise<T>) => Promise<T>) | undefined;
+  prepareNote?: (() => Promise<NoteWriteManifest>) | undefined;
+  notePrepared?: (() => Promise<void>) | undefined;
+  recoverUnpreparedNote?: boolean | undefined;
+  assertCurrent?: (() => void) | undefined;
+  prepareMediaPublication?: ((evidence: MediaPublicationIntent) => Promise<void>) | undefined;
+  recoveryId?: string | undefined;
+  onAttachment?: ((result: AttachmentWriteResult) => Promise<void>) | undefined;
+
   signal?: AbortSignal | undefined;
   actionId?: string | undefined;
   monitoringInstanceId?: string | undefined;
@@ -104,18 +123,18 @@ export class VaultWriter {
   }
 
   async plan(post: NormalizedPost, context: NotePlanContext = {}): Promise<NoteWriteManifest> {
-    const folderPath = normalizeVaultRelativePath(this.options.folderPath);
+    const folderPath = this.options.folderPath === "" ? "" : normalizeVaultRelativePath(this.options.folderPath);
     const key = contentKey(post);
     assertUniqueMediaIdentities(post);
     const fetchedAt = context.fetchedAt ?? this.now().toISOString();
     const targetNotePath = context.targetNotePath && normalizeVaultRelativePath(context.targetNotePath);
-    if (targetNotePath && (!targetNotePath.startsWith(`${folderPath}/`) || !targetNotePath.endsWith(".md"))) {
+    if (targetNotePath && (!(folderPath ? targetNotePath.startsWith(`${folderPath}/`) : !targetNotePath.includes("/")) || !targetNotePath.endsWith(".md"))) {
       throw new AgentLensError("vault_conflict", "The recovery note path is outside the destination folder.", false);
     }
     const knownFile = targetNotePath ? null : await this.vault.findByAgentLensKey?.(folderPath, key, post.canonicalUrl) ?? null;
     const notePath = targetNotePath ?? (!context.saveAsCopy ? knownFile?.path : null) ?? await availableNotePath(
       this.vault,
-      `${folderPath}/${noteFilename(post, fetchedAt)}`, key, post.canonicalUrl,
+      `${folderPath ? folderPath + "/" : ""}${noteFilename(post, fetchedAt)}`, key, post.canonicalUrl,
       !context.saveAsCopy, Boolean(context.saveAsCopy && knownFile)
 );
     const attachments = Object.freeze(planAttachments(
@@ -128,7 +147,7 @@ export class VaultWriter {
       !context.existingMediaNotePath || context.existingMediaNotePath === notePath ? context.existingMediaPaths : undefined
 ));
     const partialReasons = Object.freeze(attachments.flatMap((attachment) => attachment.partialReason ? [attachment.partialReason] : []));
-    const renderedManagedBlock = renderManagedBlock(post, attachments);
+    const renderedManagedBlock = renderManagedBlock(post, attachments, this.options.mediaPolicy ?? "download_all");
     const managedDigest = stableDigest(renderedManagedBlock);
     const frontmatter = buildFrontmatter(post, fetchedAt, this.options);
 
@@ -165,90 +184,288 @@ export class VaultWriter {
 
   async resolveNewCollision(post: NormalizedPost, manifest: NoteWriteManifest): Promise<NoteWriteManifest> {
     if (manifest.action !== "new" || !this.vault.getFile(manifest.notePath)) return manifest;
-    return new VaultWriter(this.vault, { ...this.options, folderPath: manifest.notePath.slice(0, manifest.notePath.lastIndexOf("/")), templateId: manifest.templateId, mediaPolicy: manifest.mediaPolicy }).plan(post, { fetchId: manifest.fetchId, saveAsCopy: manifest.saveAsCopy });
+    return new VaultWriter(this.vault, { ...this.options, folderPath: parentFolder(manifest.notePath), templateId: manifest.templateId, mediaPolicy: manifest.mediaPolicy }).plan(post, { fetchId: manifest.fetchId, saveAsCopy: manifest.saveAsCopy });
   }
 
   async execute(
     manifest: NoteWriteManifest,
     sourceUrl: string,
-    resolveMedia?: ((mediaId: string) => Promise<DownloadedMedia>),
+    resolveMedia?: ((mediaId: string, lease?: TransferLease) => Promise<DownloadedMedia>),
     context: VaultWriteContext = {}
 ): Promise<VaultWriteResult> {
-    if (manifest.action === "blocked") {
-      throw new AgentLensError("vault_conflict", manifest.reason, false);
+    context.signal?.throwIfAborted();
+    context.assertCurrent?.();
+    let writeTail: Promise<unknown> = Promise.resolve();
+    const physicalWrite = context.physicalWrite ?? (<T>(work: () => Promise<T>): Promise<T> => { const next = writeTail.catch(() => undefined).then(work); writeTail = next; return next; });
+    const file = await physicalWrite(async () => {
+      context.signal?.throwIfAborted();
+      context.assertCurrent?.();
+      if (context.prepareNote) manifest = await context.prepareNote();
+      context.signal?.throwIfAborted();
+      if (manifest.action === "blocked") throw new AgentLensError("vault_conflict", manifest.reason, false);
+      const pendingBlock = resolveMedia ? manifest.attachments
+        .filter(item => item.action === "new")
+        .reduce((text, item) => text.replaceAll(`![[${item.path}]]`, downloadingPlaceholder(item.mediaId)), manifest.renderedManagedBlock)
+        : manifest.renderedManagedBlock;
+      return this.writeNote({ ...manifest, renderedManagedBlock: pendingBlock }, context.recoveryId, context.assertCurrent);
+    });
+    try {
+      context.assertCurrent?.();
+      await context.notePrepared?.();
+      context.assertCurrent?.();
+      const attachmentResults = await this.writeAttachments(file, manifest, sourceUrl, resolveMedia, context.signal, Boolean(context.recoveryId), context.prepareMediaPublication, context.assertCurrent, context.onAttachment, physicalWrite, context);
+      const writtenAt = this.now().toISOString();
+      if (context.recoveryId && (manifest.action !== "skip" || attachmentResults.some(item => item.status === "saved"))) {
+        const text = await this.vault.readText(file);
+        context.assertCurrent?.();
+        await this.vault.modifyText(file, withRecoveryMarker(text, context.recoveryId, writtenAt));
+      }
+      context.assertCurrent?.();
+      return writeResult(manifest, file, attachmentResults, sourceUrl, context, writtenAt);
+    } catch (error) {
+      if (!context.recoveryId || error instanceof MediaWriteUncertainError || error instanceof NoteWriteUncertainError) throw error;
+      throw new NoteWriteUncertainError(error);
     }
 
-    context.signal?.throwIfAborted();
-    const pendingBlock = resolveMedia ? manifest.attachments
-      .filter(item => item.action === "new")
-      .reduce((text, item) => text.replaceAll(`![[${item.path}]]`, downloadingPlaceholder(item.mediaId)), manifest.renderedManagedBlock)
-      : manifest.renderedManagedBlock;
-    const file = await this.writeNote({ ...manifest, renderedManagedBlock: pendingBlock });
-    const attachmentResults = await this.writeAttachments(file, manifest, sourceUrl, resolveMedia, context.signal);
-    return writeResult(manifest, file, attachmentResults, sourceUrl, context, this.now().toISOString());
   }
 
-  private async writeNote(manifest: NoteWriteManifest): Promise<VaultFileRef> {
-    const folder = manifest.notePath.slice(0, manifest.notePath.lastIndexOf("/"));
-    await this.vault.ensureFolder(folder);
-    let file = this.vault.getFile(manifest.notePath);
-    if (manifest.action === "new") {
-      if (file) throw new AgentLensError("vault_conflict", "The planned note path became occupied.", true);
-      file = await this.vault.createText(manifest.notePath, `${manifest.renderedManagedBlock}\n\n## Note\n\n`);
-    } else if (!file) {
-      throw new AgentLensError("vault_conflict", "The planned note disappeared before it was written.", true);
-    } else if (manifest.action === "update") {
-      const current = await this.vault.readText(file);
-      const updated = replaceManagedBlock(current, manifest.renderedManagedBlock);
-      await this.vault.modifyText(file, updated);
-    }
+  async recoveryEvidence(recoveryId: string, manifest: NoteWriteManifest): Promise<{ savedAt?: string } | undefined> {
+    const file = this.vault.getFile(manifest.notePath);
+    if (!file) return undefined;
+    const text = await this.vault.readText(file);
+    const marker = /<!-- agentlens:write:([^ ]+) -->/.exec(text)?.[1]?.split("|");
+    if (!marker || marker[0] !== encodeURIComponent(recoveryId) || !extractManagedBlock(text)) return undefined;
+    const savedAt = marker[1] ? decodeURIComponent(marker[1]) : undefined;
+    if (savedAt && !Number.isFinite(Date.parse(savedAt))) return undefined;
+    const saved = manifest.action !== "skip" || manifest.attachments.some(item => item.action === "new"
+      && this.vault.getFile(item.path) && text.includes(`![[${item.path}]]`));
+    return saved ? { ...(savedAt ? { savedAt } : {}) } : undefined;
+  }
 
-    await this.vault.updateFrontmatter(file, manifest.frontmatter);
-    await this.vault.recordNoteIdentity?.(file, manifest.contentKey);
-    return file;
+  /** Read-only completion check: no downloads, note writes, or inferred retry budget. */
+  async confirmRecovery(recoveryId: string, manifest: NoteWriteManifest, sourceUrl: string,
+    context: VaultWriteContext = {}): Promise<VaultWriteResult | undefined> {
+    const evidence = await this.recoveryEvidence(recoveryId, manifest);
+    const file = this.vault.getFile(manifest.notePath);
+    if (!file || !evidence?.savedAt) return undefined;
+    const text = await this.vault.readText(file);
+    const managed = extractManagedBlock(text);
+    if (!managed || managedContent(managed) !== manifest.renderedManagedBlock) return undefined;
+    const attachments: AttachmentWriteResult[] = [];
+    for (const item of manifest.attachments) {
+      if (item.action !== "link" && (!this.vault.getFile(item.path) || !text.includes(`![[${item.path}]]`))) return undefined;
+      attachments.push({ mediaId: item.mediaId, path: item.path,
+        status: item.action === "link" ? "linked" : item.action === "skip" ? "skipped" : "saved" });
+    }
+    return { ...writeResult(manifest, file, attachments, sourceUrl, { ...context, actionId: recoveryId }, evidence.savedAt), recovered: true };
+  }
+
+  /** Repair only our exact interrupted block after every attempted publication has byte proof. */
+  async reconcilePublications(recoveryId: string, manifest: NoteWriteManifest, evidence: readonly MediaPublicationIntent[],
+    sourceUrl: string, context: VaultWriteContext = {}): Promise<VaultWriteResult | undefined> {
+    const unprepared = context.recoverUnpreparedNote === true && evidence.length === 0;
+    if ((!evidence.length && !unprepared) || new Set(evidence.map(item => item.mediaId)).size !== evidence.length) return undefined;
+    const file = this.vault.getFile(manifest.notePath);
+    if (!file) return undefined;
+    let text = await this.vault.readText(file);
+    const marker = /<!-- agentlens:write:([^ ]+) -->/.exec(text)?.[1]?.split("|");
+    if (!marker || marker[0] !== encodeURIComponent(recoveryId)) return undefined;
+    const verified = new Set(await this.verifyMediaPublications(manifest, evidence));
+    if (verified.size !== evidence.length) return undefined;
+    const attachments: AttachmentWriteResult[] = [];
+    for (const item of manifest.attachments) {
+      if (unprepared && item.action === "new" && this.vault.getFile(item.path)) return undefined;
+      if (item.action === "skip" && !this.vault.getFile(item.path)) return undefined;
+      attachments.push({ mediaId: item.mediaId, path: item.path,
+        status: item.action === "link" ? "linked" : item.action === "skip" ? "skipped" : verified.has(item.mediaId) ? "saved" : "failed",
+        ...(item.action === "new" && !verified.has(item.mediaId) ? { failureKind: "retryable" as const } : {}) });
+    }
+    const interrupted = manifest.attachments.filter(item => item.action === "new").reduce((body, item) =>
+      body.replaceAll(`![[${item.path}]]`, downloadingPlaceholder(item.mediaId)), manifest.renderedManagedBlock);
+    const repaired = attachments.filter(item => item.status === "failed").reduce((body, item) =>
+      body.replaceAll(`![[${item.path}]]`, "Media not saved"), manifest.renderedManagedBlock);
+    const managed = extractManagedBlock(text);
+    if (!managed || ![interrupted, repaired].includes(managedContent(managed))) return undefined;
+    // Re-read after hashing so an intervening user edit is never overwritten.
+    if (await this.vault.readText(file) !== text) return undefined;
+    context.assertCurrent?.();
+    if (unprepared) {
+      await this.vault.updateFrontmatter(file, manifest.frontmatter);
+      context.assertCurrent?.();
+      await this.vault.recordNoteIdentity?.(file, manifest.contentKey);
+      context.assertCurrent?.();
+      const updated = await this.vault.readText(file);
+      if (extractManagedBlock(updated) !== managed) return undefined;
+      text = updated;
+    }
+    context.assertCurrent?.();
+    let writtenAt = marker[1] ? decodeURIComponent(marker[1]) : undefined;
+    if (managedContent(managed) !== repaired || !writtenAt || !Number.isFinite(Date.parse(writtenAt))) {
+      writtenAt = this.now().toISOString();
+      await this.vault.modifyText(file, withRecoveryMarker(replaceManagedBlock(text, repaired), recoveryId, writtenAt));
+    }
+    return { ...writeResult(manifest, file, attachments, sourceUrl, { ...context, actionId: recoveryId }, writtenAt),
+      recovered: true, reconciled: true, ...(unprepared ? { attachmentsNotStarted: true } : {}) };
+  }
+
+  /** Read-only byte proof; the caller still owns note reconciliation and task settlement. */
+  async verifyMediaPublications(manifest: NoteWriteManifest, evidence: readonly MediaPublicationIntent[]): Promise<readonly string[]> {
+    if (!this.vault.fingerprintMedia) return [];
+    const verified: string[] = [];
+    for (const item of evidence) {
+      const original = manifest.attachments.find(attachment => attachment.mediaId === item.mediaId && attachment.path === item.path);
+      if (!original || !this.vault.getFile(item.path)) continue;
+      const actual = await this.vault.fingerprintMedia(item.path);
+      if (actual?.sizeBytes === item.sizeBytes && actual.sha256 === item.sha256) verified.push(item.mediaId);
+    }
+    return verified;
+  }
+
+  /** Reuse requires both another committed receipt and the original note/media still present. */
+  async confirmReuse(manifest: NoteWriteManifest, ledger: PersistedLedgerEntry): Promise<VaultWriteResult | undefined> {
+    if (ledger.contentKey !== manifest.contentKey || ledger.notePath !== manifest.notePath
+        || ledger.completion !== "complete" || ledger.physicalStatus !== "active" || ledger.status === "failed") return undefined;
+    const file = this.vault.getFile(manifest.notePath);
+    if (!file) return undefined;
+    const text = await this.vault.readText(file), managed = extractManagedBlock(text);
+    if (!managed || managedContent(managed) !== manifest.renderedManagedBlock) return undefined;
+    const attachments: AttachmentWriteResult[] = [];
+    for (const item of manifest.attachments) {
+      const evidence = ledger.media.find(media => media.mediaKey === `${manifest.contentKey}:media:${item.mediaId}` && media.path === item.path);
+      if (!evidence || evidence.status === "failed") return undefined;
+      if (item.action !== "link" && (evidence.status === "linked" || !this.vault.getFile(item.path) || !text.includes(`![[${item.path}]]`))) return undefined;
+      attachments.push({ mediaId: item.mediaId, path: item.path, status: item.action === "link" ? "linked" : "skipped" });
+    }
+    return { manifest: { ...manifest, action: "skip" }, file, ledger, attachments };
+  }
+
+  private async writeNote(manifest: NoteWriteManifest, recoveryId?: string, assertCurrent?: () => void): Promise<VaultFileRef> {
+    const folder = parentFolder(manifest.notePath);
+    assertCurrent?.();
+    if (folder) await this.vault.ensureFolder(folder);
+    assertCurrent?.();
+    let file = this.vault.getFile(manifest.notePath);
+    let mutationStarted = false;
+    try {
+      if (manifest.action === "new") {
+        if (file) throw new AgentLensError("vault_conflict", "The planned note path became occupied.", true);
+        assertCurrent?.();
+        mutationStarted = true;
+        file = await this.vault.createText(manifest.notePath, `${manifest.renderedManagedBlock}\n\n## Note\n\n${recoveryId ? `${recoveryMarker(recoveryId)}\n` : ""}`);
+      } else if (!file) {
+        throw new AgentLensError("vault_conflict", "The planned note disappeared before it was written.", true);
+      } else if (manifest.action === "update") {
+        const current = await this.vault.readText(file);
+        const updated = replaceManagedBlock(current, manifest.renderedManagedBlock);
+        assertCurrent?.();
+        mutationStarted = true;
+        await this.vault.modifyText(file, recoveryId ? withRecoveryMarker(updated, recoveryId) : updated);
+      }
+
+      if (recoveryId && manifest.action === "skip" && manifest.attachments.some(item => item.action === "new")) {
+        const current = await this.vault.readText(file);
+        assertCurrent?.();
+        mutationStarted = true;
+        await this.vault.modifyText(file, withRecoveryMarker(current, recoveryId));
+      }
+      assertCurrent?.();
+      mutationStarted = true;
+      await this.vault.updateFrontmatter(file, manifest.frontmatter);
+      assertCurrent?.();
+      await this.vault.recordNoteIdentity?.(file, manifest.contentKey);
+      assertCurrent?.();
+      return file;
+    } catch (error) {
+      if (recoveryId && mutationStarted) throw new NoteWriteUncertainError(error);
+      throw error;
+    }
   }
 
   private async writeAttachments(
     file: VaultFileRef,
     manifest: NoteWriteManifest,
     sourceUrl: string,
-    resolveMedia?: ((mediaId: string) => Promise<DownloadedMedia>),
-    signal?: AbortSignal
-): Promise<AttachmentWriteResult[]> {
+    resolveMedia?: ((mediaId: string, lease?: TransferLease) => Promise<DownloadedMedia>),
+    signal?: AbortSignal,
+    reconcileWrites = false,
+    preparePublication?: (evidence: MediaPublicationIntent) => Promise<void>,
+    assertCurrent?: () => void,
+    onAttachment?: VaultWriteContext["onAttachment"],
+    physicalWrite: <T>(work: () => Promise<T>) => Promise<T> = async work => work(),
+    { mediaSize, bufferedDownloads, waitForTransferSlot }: Pick<VaultWriteContext, "mediaSize" | "bufferedDownloads" | "waitForTransferSlot"> = {}
+  ): Promise<AttachmentWriteResult[]> {
+
+    let uncertain: MediaWriteUncertainError | undefined;
     const attachmentResults: AttachmentWriteResult[] = [];
-    for (const attachment of manifest.attachments) {
+    const record = async (result: AttachmentWriteResult) => { attachmentResults.push(result); await onAttachment?.(result); };
+    const writeAttachment = async (attachment: AttachmentWriteManifest) => {
+      assertCurrent?.();
       if (attachment.action === "skip") {
-        attachmentResults.push({ mediaId: attachment.mediaId, path: attachment.path, status: "skipped" });
-        continue;
+        await record({ mediaId: attachment.mediaId, path: attachment.path, status: "skipped" });
+        return;
       }
       if (attachment.action === "link" || !resolveMedia) {
-        attachmentResults.push({ mediaId: attachment.mediaId, path: attachment.path, status: attachment.action === "link" ? "linked" : "failed" });
-        continue;
+        await record({ mediaId: attachment.mediaId, path: attachment.path, status: attachment.action === "link" ? "linked" : "failed",
+          ...(attachment.action !== "link" ? { failureKind: "source_expired" as const } : {}) });
+
+        return;
       }
+      await transfer("obsidian", async lease => {
+      let publishing = false;
       try {
         const attachmentFolder = attachment.path.slice(0, attachment.path.lastIndexOf("/"));
         signal?.throwIfAborted();
-        await this.vault.ensureFolder(attachmentFolder);
-        const bytes = await resolveMedia(attachment.mediaId);
+        await physicalWrite(() => this.vault.ensureFolder(attachmentFolder));
+        assertCurrent?.();
+        signal?.throwIfAborted();
+        if (uncertain) throw uncertain;
+        const bytes = await resolveMedia(attachment.mediaId, lease);
         try {
           signal?.throwIfAborted();
-          if ("kind" in bytes) {
-            if (!this.vault.importMediaFile) throw new Error("This Vault cannot import desktop media files.");
-            await this.vault.importMediaFile(attachment.path, bytes, signal);
-          } else {
-            await this.vault.createBinary(attachment.path, bytes);
-          }
+          assertCurrent?.();
+          await physicalWrite(async () => {
+            if (uncertain) throw uncertain;
+            signal?.throwIfAborted(); assertCurrent?.();
+            if (preparePublication) {
+              const fingerprint = "kind" in bytes ? { sizeBytes: bytes.sizeBytes, sha256: bytes.sha256 } : await fingerprintBytes(bytes);
+              if (!fingerprint.sha256 || !/^[a-f0-9]{64}$/.test(fingerprint.sha256)) throw new Error("Attachment byte evidence is unavailable.");
+              await preparePublication({ mediaId: attachment.mediaId, path: attachment.path, sizeBytes: fingerprint.sizeBytes, sha256: fingerprint.sha256 });
+            }
+            assertCurrent?.();
+            if ("kind" in bytes && !this.vault.importMediaFile) throw new Error("This Vault cannot import desktop media files.");
+            publishing = true;
+            try {
+              if ("kind" in bytes) await this.vault.importMediaFile!(attachment.path, bytes, signal);
+              else await this.vault.createBinary(attachment.path, bytes);
+              publishing = false;
+            } catch (error) { if (reconcileWrites) uncertain = new MediaWriteUncertainError(attachment.mediaId, error); throw error; }
+          });
         } finally {
-          if ("kind" in bytes) await bytes.cleanup();
+          if ("kind" in bytes) {
+            // Temporary-source cleanup cannot revoke a confirmed Vault publication or mask its error.
+            try { await bytes.cleanup(); } catch { /* Retain the publication outcome. */ }
+          }
         }
-        attachmentResults.push({ mediaId: attachment.mediaId, path: attachment.path, status: "saved" });
+        await record({ mediaId: attachment.mediaId, path: attachment.path, status: "saved" });
       } catch (error) {
-        attachmentResults.push({ mediaId: attachment.mediaId, path: attachment.path, status: "failed",
+        if (publishing && reconcileWrites) throw new MediaWriteUncertainError(attachment.mediaId, error);
+        assertCurrent?.();
+        await record({ mediaId: attachment.mediaId, path: attachment.path, status: "failed", failureKind: error instanceof MediaDownloadError ? error.kind : "retryable",
+          ...(error instanceof MediaDownloadError && error.deferred ? { deferred: true } : {}),
+
           error: error instanceof Error ? error.message : "The attachment could not be saved." });
       }
-    }
+      }, signal, { sizeBytes: mediaSize?.(attachment.mediaId), buffered: bufferedDownloads, waitForSlot: waitForTransferSlot }).catch(async error => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) throw error;
+        assertCurrent?.();
+        await record({ mediaId: attachment.mediaId, path: attachment.path, status: "failed", failureKind: "retryable", error: "Download cancelled." });
+      });
+    };
+    if (reconcileWrites) await parallelEach(manifest.attachments, writeAttachment, 1);
+    else await parallelBySize(manifest.attachments, writeAttachment, item => mediaSize?.(item.mediaId));
     if (attachmentResults.some(item => item.status === "failed" || item.status === "saved")) {
       const current = await this.vault.readText(file);
+      assertCurrent?.();
       const managed = extractManagedBlock(current);
       if (managed) {
         const repaired = attachmentResults.reduce((text, item) => {
@@ -260,8 +477,15 @@ export class VaultWriter {
         if (repaired !== managed) await this.vault.modifyText(file, replaceManagedBlock(current, repaired));
       }
     }
+    attachmentResults.sort((a, b) => manifest.attachments.findIndex(x => x.mediaId === a.mediaId) - manifest.attachments.findIndex(x => x.mediaId === b.mediaId));
     return attachmentResults;
   }
+}
+
+function recoveryMarker(id: string, savedAt?: string): string { return `<!-- agentlens:write:${encodeURIComponent(id)}${savedAt ? `|${encodeURIComponent(savedAt)}` : ""} -->`; }
+function withRecoveryMarker(text: string, id: string, savedAt?: string): string {
+  const marker = /<!-- agentlens:write:[^\r\n]*? -->/g;
+  return marker.test(text) ? text.replace(marker, recoveryMarker(id, savedAt)) : `${text}\n${recoveryMarker(id, savedAt)}\n`;
 }
 
 function downloadingPlaceholder(mediaId: string): string {
@@ -387,13 +611,18 @@ function managedRange(content: string): { start: number; end: number } | null {
   return { start, end: noteHeading };
 }
 
-function renderManagedBlock(post: NormalizedPost, attachments: readonly AttachmentWriteManifest[]): string {
+function renderManagedBlock(post: NormalizedPost, attachments: readonly AttachmentWriteManifest[], mediaPolicy: MediaPolicy): string {
   const title = postDisplayTitle(post);
   const inlineMedia = new Set<string>();
   const content = postBodyMarkdown(cleanPostText(post.body?.trim() || post.text.trim() || post.summary?.trim() || ""), url => {
     const item = post.media.find(media => media.kind === "image" && media.sourceUrl === url);
     const attachment = item && attachments.find(candidate => candidate.mediaId === item.id);
-    if (!item || !attachment || attachment.action === "link") return undefined;
+    if (!item || !attachment) return undefined;
+    if (attachment.action === "link") {
+      if (mediaPolicy !== "link_only" || !attachment.sourceUrl) return undefined;
+      inlineMedia.add(item.id);
+      return linkedImageMarkdown(attachment.sourceUrl);
+    }
     inlineMedia.add(item.id);
     return `![[${attachment.path}]]`;
   });
@@ -411,11 +640,32 @@ function renderManagedBlock(post: NormalizedPost, attachments: readonly Attachme
   const media = post.media.filter(item => !inlineMedia.has(item.id)).map(item => {
     const attachment = attachments.find(candidate => candidate.mediaId === item.id);
     const source = attachment?.sourceUrl ?? redactPersistentUrl(item.sourceUrl, item.downloadUrlExpiresAt);
+    if (mediaPolicy === "link_only" && item.kind === "image" && source) {
+      return `- ${linkedImageMarkdown(source)}`;
+    }
+    if (mediaPolicy === "link_only" && item.kind === "video" && source) {
+      const videoSource = htmlAttribute(source);
+      // Do not persist a thumbnail known to expire as the note's poster.
+      const poster = (item.thumbnailExpiresAt ? "" : redactPersistentUrl(item.thumbnailUrl ?? ""))
+        || redactPersistentUrl(item.coverUrl ?? "") || redactPersistentUrl(post.thumbnailUrl ?? "");
+      const posterAttribute = poster ? ` poster="${htmlAttribute(poster)}"` : "";
+      const linkSource = source.replace(/[\s()<>]/g, char => encodeURIComponent(char));
+      return `- <video controls preload="metadata" playsinline style="width: 100%;" src="${videoSource}"${posterAttribute}></video> ([source](${linkSource}))`;
+    }
     return attachment && attachment.action !== "link"
       ? `- ![[${attachment.path}]]${source ? ` ([source](${source}))` : ""}`
       : source ? `- [source](${source})` : `- ${item.kind} source unavailable`;
   }).join("\n");
   return `# ${title}\n\n## Content\n${contentWithTags || "_No text was returned._"}\n\n## Media\n${media || (inlineMedia.size ? "_Media embedded in the content above._" : "_No media was returned._")}`;
+}
+
+function htmlAttribute(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function linkedImageMarkdown(source: string): string {
+  const url = source.replace(/[\s()<>[\]\\]/g, char => char === "(" ? "%28" : char === ")" ? "%29" : encodeURIComponent(char));
+  return `![Media image](${url}) ([source](${url}))`;
 }
 
 /** Before writing, show a remote image/cover rather than a nonexistent Vault embed. */
@@ -554,7 +804,7 @@ function planAttachments(
   existingMediaPaths: Readonly<Record<string, string>> = {}
 ): AttachmentWriteManifest[] {
   const noteStem = notePath.slice(notePath.lastIndexOf("/") + 1, -3);
-  const folder = `${notePath.slice(0, notePath.lastIndexOf("/"))}/attachments/${noteStem}`;
+  const folder = `${parentFolder(notePath) ? parentFolder(notePath) + "/" : ""}attachments/${noteStem}`;
   return post.media.map((media, index) => {
     const shouldDownload = policy === "download_all"
       || policy === "download_images_only" && media.kind === "image";
@@ -583,3 +833,5 @@ function attachmentExtension(media: NormalizedMedia): string {
   const extension = media.extension?.replace(/^\./, "");
   return extension && /^[a-zA-Z0-9]{1,8}$/.test(extension) ? extension : fallback;
 }
+
+function parentFolder(path: string): string { const slash = path.lastIndexOf("/"); return slash < 0 ? "" : path.slice(0, slash); }

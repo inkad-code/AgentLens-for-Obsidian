@@ -1,10 +1,12 @@
+import { DemoAuthDialog } from "./workbench/DemoAuthDialog";
+import { DiagnosticExportDialog } from "./workbench/DiagnosticExportDialog";
 import { AccountFollowsDialog } from "./workbench/AccountFollowsDialog";
 import { SINGLE_FETCH_REVIEW } from "../core/releaseProfile";
 import { useHostDocument, useHostWindow } from "./workbench/HostDocument";
 import { WorkbenchDialog } from "./workbench/WorkbenchDialog";
 import { EmailAuthPage } from "./workbench/EmailAuthPage";
 import { PlanSelectionPage } from "./workbench/PlanSelectionPage";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useId, useRef, useState } from "react";
 import type { AgentLensWorkbenchPort } from "../workbench/ports";
 import { ActivityPane } from "./ActivityPane";
 import { SingleFetchPane } from "./workbench/SingleFetchPane";
@@ -81,7 +83,7 @@ function WorkbenchContent({ initialTab = "single", initialUrl, service, onOpenNo
     activeTab, resetVersions, setDraft, requestTab, handleKeyDown
   } = useWorkflowTabs(SINGLE_FETCH_REVIEW && initialTab === "auto" ? "single" : initialTab, onDirtyStateChange);
   const {
-    authState, authRestoring, authBusy, authError, capabilities, capabilitiesError, publicCatalog, publicCatalogError, account, accountUpdatedAt,
+    authState, authRestoring, authBusy, authRecovering, sessionRecovery, authError, capabilities, capabilitiesError, publicCatalog, publicCatalogError, account, accountUpdatedAt,
     accountStale, accountBusy, beginSignIn, retryRestore,
     cancelSignIn, signOut, refreshAccount, emailSignIn, openAuthorizationPage
   } = useWorkbenchSession(service);
@@ -98,6 +100,9 @@ function WorkbenchContent({ initialTab = "single", initialUrl, service, onOpenNo
   const [preferencesLoaded, setPreferencesLoaded] = useState(!service?.uiPreferences);
   const panelId = useId();
   const [accountOpen, setAccountOpen] = useState(false);
+  const [diagnosticOwner, setDiagnosticOwner] = useState<string>();
+  const diagnosticScope = authState.status === "signed_in" && account ? JSON.stringify([account.user.id, account.installationId]) : undefined;
+  useEffect(() => { setDiagnosticOwner(undefined); }, [diagnosticScope, service]);
   const [showAccountFollows, setShowAccountFollows] = useState(false);
   const [removedFollowId, setRemovedFollowId] = useState<string>();
   useEffect(() => { setShowAccountFollows(false); setRemovedFollowId(undefined); }, [service, authState.status]);
@@ -124,14 +129,20 @@ function WorkbenchContent({ initialTab = "single", initialUrl, service, onOpenNo
     return () => { document.removeEventListener('pointerdown', dismissOutside); window.removeEventListener('keydown', dismissWithEscape, true); window.removeEventListener('agentlens-escape', dismissWithEscape as EventListener, true); };
   }, [accountOpen, account]);
   const [signUpPrompt,setSignUpPrompt]=useState(false);
+  const [demoAuthOpen,setDemoAuthOpen]=useState(false);
+  useEffect(()=>{if(authState.status === "signed_in")setDemoAuthOpen(false);},[authState.status]);
   const [bulkNavigationVersion, setBulkNavigationVersion] = useState(0);
   const [bulkSaveView,setBulkSaveView]=useState(false);
   const [singleSaveView,setSingleSaveView]=useState(false);
+  const [singleHasPreview,setSingleHasPreview]=useState(false);
+  const fittedSingle = view === "workflows" && activeTab === "single" && singleHasPreview && !singleSaveView;
+  const workflowBody = useRef<HTMLElement>(null);
+  useLayoutEffect(() => { if (fittedSingle && workflowBody.current) workflowBody.current.scrollTop = 0; }, [fittedSingle]);
 
   useEffect(()=>{if(authState.status === "signed_in")setView(current=>current === "login" || current === "register" ? "workflows" : current);},[authState.status]);
   const googleAuthActive = (authState.status === "authorizing" || authState.status === "error") && authState.provider === "google";
   useEffect(() => {
-    if (googleAuthActive) setView("login");
+    if (googleAuthActive) setView(current => current === "register" ? current : "login");
   }, [googleAuthActive]);
 
   useEffect(() => {
@@ -155,7 +166,7 @@ function WorkbenchContent({ initialTab = "single", initialUrl, service, onOpenNo
   }
 
   return (
-    <section className={`agentlens-workbench${view === "login" || view === "register" ? " has-auth-page" : ""}`} aria-labelledby={`${panelId}-workbench-name`}>
+    <section className={`agentlens-workbench${view === "login" || view === "register" ? " has-auth-page" : ""}${authBusy || (authState.status === "authorizing" && authState.provider === "google") ? " has-auth-operation" : ""}${fittedSingle ? " has-fitted-single" : ""}`} aria-labelledby={`${panelId}-workbench-name`}>
       <span className="agentlens-sr-only" id={`${panelId}-workbench-name`}>AgentLens workbench</span>
       <header className="agentlens-workbench__header">
         <div className="agentlens-brandline">
@@ -166,12 +177,12 @@ function WorkbenchContent({ initialTab = "single", initialUrl, service, onOpenNo
           <button type="button" aria-pressed={activeTab !== "auto" && view !== "activity"} onClick={() => { setView("workflows"); setBulkNavigationVersion(value => value + 1); requestTab("single"); }}>{t("nav.single")}</button>
           <button type="button" id={`${panelId}-tab-auto`} aria-pressed={activeTab === "auto" && view !== "activity"} onClick={() => { setView("workflows"); requestTab("auto"); }}>{t("nav.auto")}</button>
         </nav>}
-        <div className={`agentlens-account-summary${authState.status !== "signed_in" && !(authState.status === "error" && authState.reason === "refresh_unavailable") ? " has-sign-in" : ""}`} aria-label="Account status">
+        <div className={`agentlens-account-summary${authState.status !== "signed_in" && !sessionRecovery ? " has-sign-in" : ""}`} aria-label="Account status">
           {authState.status === "signed_in" ? <button type="button" ref={accountTrigger} className="agentlens-account-trigger" aria-label="Account menu" aria-expanded={accountOpen} aria-controls={`${panelId}-account`} onClick={event => { focusAccountOnOpen.current = event.detail === 0; setAccountOpen(!accountOpen); }} onKeyDown={event => {if (event.key === 'ArrowDown') {event.preventDefault(); if (accountOpen) focusFirstAccountAction(); else {focusAccountOnOpen.current = true; setAccountOpen(true);}}}}>
             <strong>{authRestoring ? "Restoring…" : account?.user.name ?? "Account"}</strong><span> · {capabilities?.plan ?? "Connected"} · {account ? `${account.subscription.remainingQuota}/${account.subscription.totalQuota}` : capabilities?.quotaRemaining ?? "—"}</span>
-          </button> : <>
-            <button type="button" aria-label={authState.status === "error" && authState.reason === "refresh_unavailable" ? "Retry session" : "Sign in / register"} onClick={() => void (authState.status === "error" && authState.reason === "refresh_unavailable" ? retryRestore() : setView("login"))} disabled={authBusy || authState.status === "authorizing"}>{authRestoring ? "Restoring…" : authState.status === "error" && authState.reason === "refresh_unavailable" ? "Retry session" : "Log In"}</button>
-            <button type="button" className="mod-cta" onClick={() => setView("register")} disabled={authBusy || authState.status === "authorizing"}>Start Free</button>
+          </button> : sessionRecovery ? <button type="button" disabled>Reconnecting…</button> : <>
+            <button type="button" aria-label="Sign in / register" onClick={() => { if (authState.status === "authorizing") void cancelSignIn(); setView("login"); }} disabled={authBusy || (authState.status === "authorizing" && authState.provider !== "google")}>{authRestoring ? "Restoring…" : "Log In"}</button>
+            <button type="button" className="mod-cta" onClick={() => { if (authState.status === "authorizing") void cancelSignIn(); setView("register"); }} disabled={authBusy || (authState.status === "authorizing" && authState.provider !== "google")}>Start Free</button>
           </>}
           {onClose && <button type="button" className="agentlens-close" aria-label="Close AgentLens" onClick={onClose}><img src={designAssets.imgMingcuteCloseLine} alt="" width="24" height="24" /></button>}
         </div>
@@ -179,10 +190,17 @@ function WorkbenchContent({ initialTab = "single", initialUrl, service, onOpenNo
 
       {authState.status === "error" && authState.reason === "credential_unavailable" && <section className="agentlens-device-auth" role="alert">
         <div><strong>Your saved sign-in couldn’t be opened</strong><span>Check Obsidian’s Keychain settings, then retry.</span></div>
-        <button type="button" className="mod-cta" onClick={() => void retryRestore()} disabled={authBusy}>Retry saved sign-in</button>
+        <button type="button" className="mod-cta" onClick={() => void retryRestore()} disabled={authBusy || authRecovering}>Retry saved sign-in</button>
       </section>}
-      {authState.status === "error" && authState.reason !== "credential_unavailable" && authState.provider !== "google" && <section className="agentlens-device-auth" role="alert"><div><strong>{authState.reason === "refresh_unavailable" ? "Your saved sign-in is temporarily unavailable" : `Authorization ${authState.reason === "denied" ? "was denied" : authState.reason === "expired" ? "expired" : "could not be restored"}`}</strong><span>{authState.reason === "refresh_unavailable" ? "Your sign-in was kept. Check your connection and retry." : authState.provider === "email" ? "Enter your email and password again to reconnect this vault." : "The previous code or session will not be reused."}</span></div><button type="button" className="mod-cta" onClick={() => void (authState.reason === "refresh_unavailable" ? retryRestore() : signOut().then(() => setView("login")))} disabled={authBusy}>{authState.reason === "refresh_unavailable" ? "Retry saved session" : authState.provider === "email" ? "Back to email sign-in" : "Start again"}</button></section>}
-      {authError && view !== "login" && view !== "register" && <p className="agentlens-inline-error" role="alert">{authError}</p>}
+      {sessionRecovery && <section className="agentlens-device-auth agentlens-session-recovery" role="status" aria-label="Session connection">
+        <div><strong>{sessionRecovery.attempt >= 3 ? "AgentLens is still unavailable" : "Reconnecting to AgentLens…"}</strong><span>Your saved sign-in and current work are kept. We’ll retry automatically.</span></div>
+        <button type="button" onClick={() => void retryRestore()} disabled={authBusy || authRecovering || authRestoring}>{authRecovering ? "Reconnecting…" : "Retry now"}</button>
+      </section>}
+      {authState.status === "error" && authState.reason !== "credential_unavailable" && authState.reason !== "refresh_unavailable" && authState.provider !== "google" && <section className="agentlens-device-auth" role="alert">
+        <div><strong>{`Authorization ${authState.reason === "denied" ? "was denied" : authState.reason === "expired" ? "expired" : "could not be restored"}`}</strong><span>{authState.provider === "email" ? "Enter your email and password again to reconnect this vault." : "The previous code or session will not be reused."}</span></div>
+        <button type="button" className="mod-cta" onClick={() => void signOut().then(() => setView("login"))} disabled={authBusy}>{authState.provider === "email" ? "Back to email sign-in" : "Start again"}</button>
+      </section>}
+      {authError && !sessionRecovery && view !== "login" && view !== "register" && !(view === "workflows" && activeTab === "auto" && authState.status === "signed_in") && <p className="agentlens-inline-error" role="alert">{authError}</p>}
       {capabilities && service && <UpdateNotice
         currentVersion={service.clientVersion()}
         capabilities={capabilities}
@@ -201,21 +219,24 @@ function WorkbenchContent({ initialTab = "single", initialUrl, service, onOpenNo
         </div>
         <nav className="agentlens-account-actions" aria-label="Account actions">
           <a className="agentlens-account-access" href={new URL(account.subscription.billingUrl).origin} target="_blank" rel="noreferrer"><i><img src={accountAssets.imgIconGlyph} alt="" /></i><span>Access AgentLens</span><img src={accountAssets.imgTrailingChevron} alt="" /></a>
-          <button type="button" title={account.subscription.fetchAllowed ? 'Billing & Usage' : billingAction(account.subscription.fetchBlockedReason)} onClick={() => { setAccountOpen(false); setView("plans"); }}><i><img src={accountAssets.imgFrame} alt="" /></i><span>Billing &amp; Usage</span><img src={accountAssets.imgTrailingChevron} alt="" /></button>
-          {!SINGLE_FETCH_REVIEW && <button type="button" onClick={() => { setAccountOpen(false); setShowAccountFollows(true); }}><i><img src={accountAssets.imgFrame} alt="" /></i><span>View account follows</span><img src={accountAssets.imgTrailingChevron} alt="" /></button>}
-          <a className="agentlens-account-support" href="https://agentlensapi.io/support" target="_blank" rel="noopener noreferrer"><i><img src={accountAssets.imgSupport} alt="" /></i><span>Support</span><img src={accountAssets.imgTrailingChevron} alt="" /></a>
+          <button type="button" title={account.subscription.fetchAllowed ? 'Manage plan' : billingAction(account.subscription.fetchBlockedReason)} onClick={() => { setAccountOpen(false); setView("plans"); }}><i><img src={accountAssets.imgFrame} alt="" /></i><span>Manage plan</span><img src={accountAssets.imgTrailingChevron} alt="" /></button>
+          {!SINGLE_FETCH_REVIEW && <button type="button" hidden onClick={() => { setAccountOpen(false); setShowAccountFollows(true); }}><i><img src={accountAssets.imgFrame} alt="" /></i><span>View account follows</span><img src={accountAssets.imgTrailingChevron} alt="" /></button>}
+          <a onClick={event => { if (event.shiftKey && !SINGLE_FETCH_REVIEW) { event.preventDefault(); setDiagnosticOwner(diagnosticScope); } }} className="agentlens-account-support" href="https://agentlensapi.io/support" target="_blank" rel="noopener noreferrer"><i><img src={accountAssets.imgSupport} alt="" /></i><span>Support</span><img src={accountAssets.imgTrailingChevron} alt="" /></a>
+
           <button type="button" className="agentlens-account-logout" onClick={() => void signOut()} disabled={authBusy}><i><img src={accountAssets.imgIconGlyph1} alt="" /></i><span>Log Out</span><img src={accountAssets.imgTrailingChevron1} alt="" /></button>
         </nav>
       </section>}
 
+      {diagnosticOwner && diagnosticOwner === diagnosticScope && service && <DiagnosticExportDialog key={diagnosticOwner} service={service} onClose={() => setDiagnosticOwner(undefined)} />}
       {!SINGLE_FETCH_REVIEW && showAccountFollows && service && authState.status === "signed_in" && <AccountFollowsDialog service={service} onClose={() => setShowAccountFollows(false)} onUnfollowed={setRemovedFollowId} />}
+      {demoAuthOpen && <DemoAuthDialog onCancelBrowserSignIn={()=>void cancelSignIn()} onClose={()=>{void cancelSignIn();setDemoAuthOpen(false);}} busy={authBusy} browserOpening={authBusy} browserPending={authState.status === "authorizing" && authState.provider === "google"} browserError={authError} onSubmit={emailSignIn} onBrowserSignIn={()=>{if(authBusy)return;if(authState.status === "authorizing" && authState.provider === "google")void openAuthorizationPage(authState.authorization.verificationUriComplete ?? authState.authorization.verificationUri);else void beginSignIn("google","sign_up");}} onPasswordReset={async email=>{if(!service?.requestPasswordReset)throw new Error("Password reset is unavailable.");return service.requestPasswordReset(email);}} />}
       {signUpPrompt && <WorkbenchDialog compact iconClose title="Sign up to start free with real links" className="agentlens-signup-prompt" onClose={()=>setSignUpPrompt(false)}>
         <div className="agentlens-dialog-actions"><button type="button" onClick={()=>setSignUpPrompt(false)}>Cancel</button><button type="button" className="mod-cta" onClick={()=>{setSignUpPrompt(false);setView("register");}}>Sign Up</button></div>
       </WorkbenchDialog>}
-      {(view === "login" || view === "register") && <EmailAuthPage key={view} mode={view} busy={authBusy || authState.status === "authorizing"} browserPending={authState.status === "authorizing" && authState.provider === "google"} browserOpening={authBusy} browserError={authState.status === "error" && authState.provider === "google" ? authState.reason === "expired" ? "Sign-in could not be completed. Start again." : authState.reason === "denied" ? "Sign-in was cancelled. Start again when you’re ready." : "Sign-in could not be completed. Start again." : authError} onBack={()=>{void cancelSignIn();setView("workflows");}} onModeChange={setView} onPasswordReset={async email=>{if(!service?.requestPasswordReset)throw new Error("Password reset is unavailable.");return service.requestPasswordReset(email);}} onSubmit={async credentials=>{await emailSignIn(credentials);}} onBrowserSignIn={()=>{if(authBusy)return;if(authState.status === "authorizing" && authState.provider === "google")void openAuthorizationPage(authState.authorization.verificationUriComplete ?? authState.authorization.verificationUri);else void beginSignIn("google", view === "register" ? "sign_up" : "sign_in");}} />}
+      {(view === "login" || view === "register") && <EmailAuthPage key={view} mode={view} busy={authBusy || (authState.status === "authorizing" && authState.provider !== "google")} onCancelBrowserSignIn={()=>void cancelSignIn()} browserPending={authState.status === "authorizing" && authState.provider === "google"} browserOpening={authBusy} browserError={authState.status === "error" && authState.provider === "google" ? authState.reason === "expired" ? "Sign-in could not be completed. Start again." : authState.reason === "denied" ? "Sign-in was cancelled. Start again when you’re ready." : "Sign-in could not be completed. Start again." : authError} onBack={()=>{void cancelSignIn();setView("workflows");}} onModeChange={mode=>{void cancelSignIn();setView(mode);}} onPasswordReset={async email=>{if(!service?.requestPasswordReset)throw new Error("Password reset is unavailable.");return service.requestPasswordReset(email);}} onSubmit={async credentials=>{await emailSignIn(credentials);}} onBrowserSignIn={()=>{if(authBusy)return;if(authState.status === "authorizing" && authState.provider === "google")void openAuthorizationPage(authState.authorization.verificationUriComplete ?? authState.authorization.verificationUri);else void beginSignIn("google", view === "register" ? "sign_up" : "sign_in");}} />}
       {!SINGLE_FETCH_REVIEW && view === "activity" && service && <ActivityPane service={service} onBack={() => setView("workflows")} />}
       {view === "plans" && account && <PlanSelectionPage key={account.user.id} accountId={account.user.id} currentPlan={account.subscription.plan} billing={service?.billing} onAccountChanged={refreshAccount} onBack={() => setView("workflows")} />}
-      <main className="agentlens-workbench__body" hidden={view !== "workflows"}>
+      <main ref={workflowBody} className={`agentlens-workbench__body${fittedSingle ? " is-single-preview" : ""}`} hidden={view !== "workflows" || authState.status !== "signed_in" && (authRestoring || Boolean(sessionRecovery))}>
       {activeTab !== "auto" && <>
         <div className="agentlens-pane__intro">
           <p className="agentlens-eyebrow">CAPTURE CONTENT</p>
@@ -247,10 +268,11 @@ function WorkbenchContent({ initialTab = "single", initialUrl, service, onOpenNo
         ))}
       </nav>
 
-        <section id={`${panelId}-single`} role="tabpanel" aria-labelledby={`${panelId}-tab-single`} hidden={activeTab !== "single"}><SingleFetchPane onSaveViewChange={setSingleSaveView} onRequestSignUp={()=>setSignUpPrompt(true)} key={resetVersions.single} initialUrl={initialUrl} service={service} signedIn={!authRestoring && authState.status === "signed_in"} capabilities={capabilities} onOpenNote={onOpenNote} defaults={defaults} onAccountChanged={() => void refreshAccount()} onDraftChange={(dirty) => setDraft("single", dirty)} /></section>
-        <section id={`${panelId}-bulk`} role="tabpanel" aria-labelledby={`${panelId}-tab-bulk`} hidden={activeTab !== "bulk"}><BulkFetchPane navigationVersion={bulkNavigationVersion} onRequestSignUp={()=>setSignUpPrompt(true)} onSaveViewChange={setBulkSaveView} key={resetVersions.bulk} service={service} signedIn={!authRestoring && authState.status === "signed_in"} capabilities={capabilities} onOpenNote={onOpenNote} defaults={defaults} onAccountChanged={() => void refreshAccount()} onDraftChange={(dirty) => setDraft("bulk", dirty)} /></section>
+        <section id={`${panelId}-single`} role="tabpanel" aria-labelledby={`${panelId}-tab-single`} hidden={activeTab !== "single"}><SingleFetchPane onDemoSaved={()=>setDemoAuthOpen(true)} onPreviewChange={setSingleHasPreview} onSaveViewChange={setSingleSaveView} onStartFree={()=>setView("register")} onRequestSignUp={()=>setSignUpPrompt(true)} key={resetVersions.single} initialUrl={initialUrl} service={service} signedIn={authState.status === "signed_in"} capabilities={capabilities} onOpenNote={onOpenNote} defaults={defaults} onAccountChanged={() => void refreshAccount()} onDraftChange={(dirty) => setDraft("single", dirty)} /></section>
+        <section id={`${panelId}-bulk`} role="tabpanel" aria-labelledby={`${panelId}-tab-bulk`} hidden={activeTab !== "bulk"}><BulkFetchPane active={activeTab === "bulk" && view === "workflows"} onDemoSaved={()=>setDemoAuthOpen(true)} navigationVersion={bulkNavigationVersion} onStartFree={()=>setView("register")} onRequestSignUp={()=>setSignUpPrompt(true)} onSaveViewChange={setBulkSaveView} key={resetVersions.bulk} service={service} signedIn={authState.status === "signed_in"} capabilities={capabilities} onOpenNote={onOpenNote} defaults={defaults} onAccountChanged={() => void refreshAccount()} onDraftChange={(dirty) => setDraft("bulk", dirty)} /></section>
       </div>
-        {!SINGLE_FETCH_REVIEW && <section id={`${panelId}-auto`} role="tabpanel" aria-labelledby={`${panelId}-tab-auto`} hidden={activeTab !== "auto"}><AutoFetchPane removedFollowId={removedFollowId} onOpenFolder={onOpenFolder} onRequestSignUp={()=>setSignUpPrompt(true)} key={resetVersions.auto} service={service} signedIn={!authRestoring && authState.status === "signed_in"} capabilities={capabilities} defaults={defaults} onAccountChanged={() => void refreshAccount()} onDraftChange={(dirty) => setDraft("auto", dirty)} /></section>}
+        {!SINGLE_FETCH_REVIEW && <section className="agentlens-auto-tab" id={`${panelId}-auto`} role="tabpanel" aria-labelledby={`${panelId}-tab-auto`} hidden={activeTab !== "auto"}><AutoFetchPane statusError={sessionRecovery ? null : authError} removedFollowId={removedFollowId} onOpenFolder={onOpenFolder} onStartFree={()=>setView("register")} onRequestSignUp={()=>setSignUpPrompt(true)} key={resetVersions.auto} service={service} signedIn={!authRestoring && authState.status === "signed_in"} capabilities={capabilities} capabilitiesError={capabilitiesError} defaults={defaults} onAccountChanged={() => void refreshAccount()} onDraftChange={(dirty) => setDraft("auto", dirty)} /></section>}
+
       </main>
     </section>
   );

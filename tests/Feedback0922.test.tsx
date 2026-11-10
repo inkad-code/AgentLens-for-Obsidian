@@ -32,9 +32,9 @@ describe("0922 feedback", () => {
     const capabilities = { platforms: ids.map(id => ({ id, label: id, available: true, single: true, profile: !singleOnly.has(id), autoFetch: !singleOnly.has(id) })) } as unknown as AccountCapabilities;
     for (const mode of ["single", "profile", "autoFetch"] as const) {
       const { container, rerender, unmount } = render(<SupportedPlatforms mode={mode} capabilities={null} publicCatalog={{clientType:"obsidian_plugin",platforms:capabilities.platforms}} />);
-      const guest = [...container.querySelectorAll(".agentlens-platforms > span[aria-label]")].map(el => el.getAttribute("aria-label"));
+      const guest = [...container.querySelectorAll(".agentlens-platform-icons > span[aria-label]")].map(el => el.getAttribute("aria-label"));
       rerender(<SupportedPlatforms mode={mode} capabilities={capabilities} />);
-      const signedIn = [...container.querySelectorAll(".agentlens-platforms > span[aria-label]")].map(el => el.getAttribute("aria-label"));
+      const signedIn = [...container.querySelectorAll(".agentlens-platform-icons > span[aria-label]")].map(el => el.getAttribute("aria-label"));
       expect(signedIn).toEqual(guest);
       unmount();
     }

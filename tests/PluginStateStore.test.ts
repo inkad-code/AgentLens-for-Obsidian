@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PluginStateStore, type PluginDataAdapter } from "@/runtime/PluginStateStore";
+import { recordCreatorSavedPageInState, PluginStateStore, type PluginDataAdapter } from "@/runtime/PluginStateStore";
 
 class MemoryAdapter implements PluginDataAdapter {
   data: unknown = { defaultFolderPath: "Notes" };
@@ -221,4 +221,39 @@ it("remembers the selected folder across store recreation without losing other p
   await store.patchUiPreferences({ onboardingVersion: 1 });
   await store.patchUiPreferences({ recentFolder: "Research/Articles" });
   expect(await new PluginStateStore(adapter, () => "install-2").uiPreferences()).toMatchObject({ recentFolder: "Research/Articles", onboardingVersion: 1 });
+});
+
+it("retains the newer run's card statistics when an older run saves after restart", async () => {
+  const adapter = new MemoryAdapter();
+  const state = new PluginStateStore(adapter, () => "installation");
+  await state.update(value => recordCreatorSavedPageInState(value, "creator", "new", "new-page", 1,
+    "2026-10-19T01:00:00Z", ["new-post"], 2));
+  const reopened = new PluginStateStore(adapter, () => "unused");
+  await reopened.update(value => recordCreatorSavedPageInState(value, "creator", "old", "old-page", 1,
+    "2026-10-19T02:00:00Z", ["old-post"], 1));
+  await reopened.update(value => recordCreatorSavedPageInState(value, "creator", "legacy", "legacy-page", 1,
+    "2026-10-19T03:00:00Z", ["legacy-post"]));
+  expect((await reopened.load()).creatorDiagnostics.creator).toMatchObject({
+    lastSavedFetchRunId: "new", lastSavedRunSequence: 2, lastSavedCount: 1, lastSavedAt: "2026-10-19T01:00:00Z"
+  });
+  await reopened.update(value => recordCreatorSavedPageInState(value, "creator", "new", "page-2", 1,
+    "2026-10-19T00:30:00Z", ["new-post-2"], 2));
+  expect((await reopened.load()).creatorDiagnostics.creator).toMatchObject({
+    lastSavedCount: 2, lastSavedAt: "2026-10-19T01:00:00Z"
+  });
+  await reopened.update(value => recordCreatorSavedPageInState(value, "creator", "newest", "page-3", 1,
+    "2026-10-19T04:00:00Z", ["latest-post"], 3));
+  expect((await reopened.load()).creatorDiagnostics.creator).toMatchObject({
+    lastSavedFetchRunId: "newest", lastSavedRunSequence: 3, lastSavedCount: 1
+  });
+});
+
+it("rejects a conflicting sequence without changing the existing save evidence", async () => {
+  const store = new PluginStateStore(new MemoryAdapter(), () => "installation");
+  await store.update(state => recordCreatorSavedPageInState(state, "creator", "run", "page", 1,
+    "2026-10-19T01:00:00Z", ["post"], 1));
+  const before = await store.load();
+  await expect(store.update(state => recordCreatorSavedPageInState(state, "creator", "run", "page2", 1,
+    "2026-10-19T02:00:00Z", ["post2"], 3))).rejects.toThrow("sequence changed");
+  expect(await store.load()).toEqual(before);
 });

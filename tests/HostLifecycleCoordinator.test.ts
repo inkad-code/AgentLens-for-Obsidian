@@ -6,6 +6,29 @@ describe("HostLifecycleCoordinator", () => {
     vi.useRealTimers();
   });
 
+  it("keeps the default background scheduler alive while the document is hidden", () => {
+    vi.useFakeTimers();
+    const hidden = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    const onTick = vi.fn();
+    const coordinator = new HostLifecycleCoordinator({ onTick });
+    try {
+      coordinator.start(id => id, 1_000);
+      vi.advanceTimersByTime(1_000);
+      expect(onTick).toHaveBeenCalledWith("periodic_tick");
+    } finally { coordinator.stop(); hidden.mockRestore(); }
+  });
+
+  it("treats a delayed timer after sleep as recovery even without an online event", () => {
+    vi.useFakeTimers();
+    const onTick = vi.fn();
+    const coordinator = new HostLifecycleCoordinator({ onTick });
+    coordinator.start(id => id, 1_000);
+    vi.setSystemTime(Date.now() + 60_000);
+    vi.advanceTimersByTime(1_000);
+    expect(onTick).toHaveBeenLastCalledWith("host_activated");
+    coordinator.stop();
+  });
+
   it("starts once and uses only non-UI tick reasons", () => {
     vi.useFakeTimers();
     const onTick = vi.fn();

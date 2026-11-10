@@ -5,6 +5,26 @@ import type { JsonTransport, TransportRequest } from "@/runtime/ObsidianRequestU
 
 const state: BillingDashboard = { plan: "pro", billingCycle: "monthly", subscriptionStatus: "active", scheduledPlan: null, scheduledBillingCycle: null, scheduledEffectiveAt: null, checkoutStatus: null, fetchReason: null };
 describe("deployed billing contract", () => {
+  it("authenticates wallet availability and forwards the chosen payment method", async () => {
+    const requests: TransportRequest[]=[];
+    const responses: unknown[]=[{walletAvailable:true},{checkoutUrl:"https://checkout.stripe.com/wallet",status:"pending"},{checkoutUrl:"https://checkout.stripe.com/card",status:"pending"}];
+    const transport: JsonTransport={json:async(request,validate)=>{requests.push(request);return validate(responses.shift());}};
+    const api=new AgentLensApiClient(transport,{installationId:"i",deviceId:"d",clientVersion:"1",obsidianVersion:"1",platform:"desktop_windows"}).billing("token");
+    expect(await api.paymentOptions!("ultra","yearly")).toEqual({walletAvailable:true});
+    await api.checkout("intent-1","wallet");await api.checkout("intent-2","card");
+    expect(requests).toEqual([
+      {path:"/billing/payment-options?plan=ultra&billingCycle=yearly",accessToken:"token"},
+      {path:"/billing/checkout",method:"POST",accessToken:"token",body:{intentId:"intent-1",paymentMethod:"wallet"}},
+      {path:"/billing/checkout",method:"POST",accessToken:"token",body:{intentId:"intent-2",paymentMethod:"card"}}
+    ]);
+  });
+  it("does not route an active one-time plan through recurring subscription changes", () => {
+    const oneTime={...state,oneTimePurchase:true};
+    expect(billingAction(oneTime,"pro","monthly")).toBe("current");
+    expect(billingAction(oneTime,"ultra","monthly")).toBe("unavailable");
+    expect(billingAction({...oneTime,fetchReason:"SUBSCRIPTION_EXPIRED"},"ultra","monthly")).toBe("checkout");
+    expect(validateDashboard(oneTime).oneTimePurchase).toBe(true);
+  });
   it("routes existing subscriptions without creating a duplicate subscription", () => {
     expect(billingAction(state, "pro", "monthly")).toBe("current");
     expect(billingAction(state, "ultra", "monthly")).toBe("upgrade");
@@ -48,7 +68,32 @@ describe("deployed billing contract", () => {
   });
   it("rejects malformed account state and unsafe payment URLs", () => {
     expect(() => validateDashboard({ ...state, billingCycle: "annual" })).toThrow();
-    expect(() => secureBillingUrl("javascript:alert(1)")).toThrow();
-    expect(() => secureBillingUrl("https://user:pass@stripe.com")).toThrow();
+    for (const url of [
+      "javascript:alert(1)",
+      "https://user:pass@checkout.stripe.com",
+      "http://checkout.stripe.com/pay",
+      "https://checkout.stripe.com.example.org/pay",
+      "https://checkout.stripe.com:8443/pay",
+      "https://other.agentlensapi.io/pay",
+      "https://example.org/pay"
+    ]) expect(() => secureBillingUrl(url, "checkout")).toThrow();
+  });
+  it("accepts Stripe links only for their intended billing purpose and preserves URL data", () => {
+    const links = {
+      checkout: "https://checkout.stripe.com/c/pay?locale=en#original%2Ffragment",
+      invoice: "https://invoice.stripe.com/i/1",
+      portal: "https://billing.stripe.com/p/session"
+    } as const;
+    const purposes = ["checkout", "invoice", "portal"] as const;
+    for (const purpose of purposes) {
+      expect(secureBillingUrl(links[purpose], purpose)).toBe(links[purpose]);
+      for (const other of purposes.filter(candidate => candidate !== purpose)) {
+        expect(() => secureBillingUrl(links[other], purpose)).toThrow();
+      }
+    }
+    const fallback = "https://agentlensapi.io/dashboard/plan-billing?plan=pro&cycle=monthly";
+    expect(secureBillingUrl(fallback, "checkout")).toBe(fallback);
+    expect(() => secureBillingUrl(fallback, "portal")).toThrow();
+    expect(() => secureBillingUrl("https://agentlensapi.io/other", "checkout")).toThrow();
   });
 });

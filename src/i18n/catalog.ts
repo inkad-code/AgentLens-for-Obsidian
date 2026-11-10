@@ -1,6 +1,20 @@
+import { taskEnglish, taskSimplified, taskTraditional } from "./taskCatalog";
 export type Locale = "en" | "zh-CN" | "zh-TW";
 
 const english = {
+  ...taskEnglish,
+  "bulk.noFilterMatches": "No loaded posts match the current filters.",
+  "bulk.clearFilters": "Clear filters",
+  "bulk.previewLoading": "Loading preview…",
+  "bulk.previewContentLoading": "Loading…",
+  "bulk.saveWaitingForDetails": "Waiting for details",
+  "bulk.saveLoadingDetails": "Loading details…",
+  "bulk.previewDetailsFailed": "Preview couldn’t load the full details for “{title}”. {reason}",
+  "bulk.previewRetryAfter": "Wait {seconds} seconds, then open Preview again to retry.",
+  "bulk.previewRetryLater": "Please wait, then open Preview again to retry.",
+  "bulk.previewRetryExhausted": "Details could not be completed after 3 attempts. Contact Support for help.",
+  "bulk.saveDetailsUnavailable": "Post details for “{title}” are unavailable from this list. Open the original link in Single post fetch or deselect this post to save the others.",
+  "bulk.saveRefreshRequired": "Fetch the creator’s post list again to check whether “{title}” is ready to save.",
   "note.properties": "Properties",
   "note.propertiesLabel": "Note properties",
   "creator.search": "Search creators",
@@ -52,6 +66,19 @@ const english = {
 export type TranslationKey = keyof typeof english;
 
 const simplified: Partial<Record<TranslationKey, string>> = {
+  ...taskSimplified,
+  "bulk.noFilterMatches": "当前加载的帖子中没有符合筛选条件的内容。",
+  "bulk.clearFilters": "清除筛选",
+  "bulk.previewLoading": "正在加载预览…",
+  "bulk.previewContentLoading": "正在加载…",
+  "bulk.saveWaitingForDetails": "等待补全",
+  "bulk.saveLoadingDetails": "正在补全…",
+  "bulk.previewDetailsFailed": "预览补全「{title}」的作品详情失败。{reason}",
+  "bulk.previewRetryAfter": "请等待 {seconds} 秒，再打开预览重试。",
+  "bulk.previewRetryLater": "请稍后再打开预览重试。",
+  "bulk.previewRetryExhausted": "已尝试 3 次，仍未能补全详情。请联系支持获取帮助。",
+  "bulk.saveDetailsUnavailable": "此列表无法补全「{title}」的作品详情。请在单作品页打开原链接，或取消勾选这条作品以保存其他作品。",
+  "bulk.saveRefreshRequired": "请重新解析达人主页，确认「{title}」是否可以保存。",
   "note.properties": "笔记属性",
   "note.propertiesLabel": "笔记属性",
   "creator.search": "搜索创作者",
@@ -100,6 +127,19 @@ const simplified: Partial<Record<TranslationKey, string>> = {
 };
 
 const traditional: Partial<Record<TranslationKey, string>> = {
+  ...taskTraditional,
+  "bulk.noFilterMatches": "目前載入的貼文中沒有符合篩選條件的內容。",
+  "bulk.clearFilters": "清除篩選",
+  "bulk.previewLoading": "正在載入預覽…",
+  "bulk.previewContentLoading": "正在載入…",
+  "bulk.saveWaitingForDetails": "等待補全",
+  "bulk.saveLoadingDetails": "正在補全…",
+  "bulk.previewDetailsFailed": "預覽補全「{title}」的貼文詳情失敗。{reason}",
+  "bulk.previewRetryAfter": "請等待 {seconds} 秒，再開啟預覽重試。",
+  "bulk.previewRetryLater": "請稍後再開啟預覽重試。",
+  "bulk.previewRetryExhausted": "已嘗試 3 次，仍未能補全詳情。請聯絡支援取得協助。",
+  "bulk.saveDetailsUnavailable": "此清單無法補全「{title}」的貼文詳情。請在單篇貼文頁面開啟原始連結，或取消勾選這篇貼文以儲存其他貼文。",
+  "bulk.saveRefreshRequired": "請重新解析創作者主頁，確認「{title}」是否可以儲存。",
   "note.properties": "筆記屬性",
   "note.propertiesLabel": "筆記屬性",
   "creator.search": "搜尋創作者",

@@ -1,4 +1,4 @@
-// Figma exports from Obsidian page 1233:1654, except the approved AgentLens brand mark.
+// Figma exports from Obsidian page design reference, except the approved AgentLens brand mark.
 // Embedded for offline three-file packaging.
 export const designAssets = {
   imgMingcuteCloseLine: "data:image/svg+xml;base64,PHN2ZyBwcmVzZXJ2ZUFzcGVjdFJhdGlvPSJub25lIiBvdmVyZmxvdz0idmlzaWJsZSIgc3R5bGU9ImRpc3BsYXk6IGJsb2NrOyIgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0IiB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxnIGlkPSJtaW5nY3V0ZTpjbG9zZS1saW5lIj4KPHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0IiByeD0iNiIgZmlsbD0iI0VGRUZFRiIvPgo8cGF0aCBpZD0iVmVjdG9yIiBkPSJNNiA2TDE4IDE4TTYgMThMMTggNiIgc3Ryb2tlPSIjQjFCMUIxIiBzdHJva2Utd2lkdGg9IjEuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CjwvZz4KPC9zdmc+Cg==",

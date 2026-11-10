@@ -2,11 +2,12 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-execFileSync(process.execPath, ["scripts/package-review.mjs"], { cwd: root, stdio: "inherit" });
+const run = (args) => execFileSync(process.execPath, args, { cwd: root, stdio: "inherit" });
+run(["scripts/package-review.mjs"]);
 const manifest = JSON.parse(await readFile(join(root, "manifest.json"), "utf8"));
 const binaries = ["main.js", "manifest.json", "styles.css"];
 const documents = ["README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"];
@@ -39,5 +40,8 @@ try {
   await writeFile(join(output, "SHA256SUMS"), `${checksums.join("\n")}\n`);
   console.log(`Release assets: ${output}`);
 } finally {
+  if (dirname(resolve(temporary)) !== resolve(tmpdir()) || !basename(temporary).startsWith("agentlens-release-")) {
+    throw new Error("Unexpected temporary cleanup path.");
+  }
   await rm(temporary, { recursive: true, force: true });
 }

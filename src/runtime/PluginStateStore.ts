@@ -1,6 +1,8 @@
+import type { ImportTask } from "../workbench/ImportTasks";
 import type { PendingAction, PersistedLedgerEntry } from "../core/domain";
 
 export interface CreatorDiagnostics {
+  lastSavedRunSequence?: number | undefined;
   lastSavedAt: string;
   lastSavedCount: number;
   lastSavedFetchRunId: string;
@@ -20,6 +22,14 @@ export interface PluginDataAdapter {
 }
 
 export interface AgentLensPluginState {
+  sharedFolderAdoptions?: Record<string, import("../auto-fetch/shared-folder").FolderAdoption>;
+  sharedSettings?: Record<string, import("../api/shared-settings").SharedSettings[]>;
+  destinationConfigurations?: Record<string, import("../api/nativeDestinations").DestinationBinding[]>;
+  followConfigurationOutbox?: import("./FollowConfigurationOutbox").FollowConfigurationCommand[];
+  followSync?: Record<string, import("./FollowConfigurationSync").FollowSyncCheckpoint>;
+  schedulerSequence?: number | undefined;
+  importTasks?: ImportTask[];
+
   schemaVersion: 1;
   installationId: string;
   refreshTokenSecretId?: string | undefined;
@@ -47,6 +57,11 @@ export class PluginStateStore {
   async load(): Promise<AgentLensPluginState> {
     const envelope = asEnvelope(await this.adapter.loadData());
     const state = envelope.agentlensState;
+    if (isRecord(state) && state.schedulerSequence !== undefined
+        && (!Number.isSafeInteger(state.schedulerSequence) || Number(state.schedulerSequence) < 0))
+      throw new Error("Stored scheduler sequence is invalid; retain execution evidence for recovery.");
+    if (isRecord(state) && state.followConfigurationOutbox !== undefined && !isValidState(state))
+      throw new Error("Retain pending follow configuration commands before recovering plugin state.");
     if (isValidState(state)) return this.publish(state);
 
     const initial = recoverState(state, this.createInstallationId);
@@ -77,6 +92,8 @@ export class PluginStateStore {
     const task = this.writeQueue.then(async () => {
       const envelope = asEnvelope(await this.adapter.loadData());
       const state = envelope.agentlensState;
+      if (isRecord(state) && state.followConfigurationOutbox !== undefined && !isValidState(state))
+        throw new Error("Retain pending follow configuration commands before recovering plugin state.");
       const current = isValidState(state)
         ? structuredClone(state)
         : recoverState(state, this.createInstallationId);
@@ -98,31 +115,7 @@ export class PluginStateStore {
     savedAt: string,
     savedContentKeys?: readonly string[]
   ): Promise<void> {
-    if (!creatorId || !fetchRunId || !fetchId || savedCount < 1) return;
-    const pageKey = `${fetchRunId}:${fetchId}`;
-    await this.update((state) => {
-      const current = state.creatorDiagnostics[creatorId];
-      const sameRun = current?.lastSavedFetchRunId === fetchRunId;
-      const alreadyCounted = sameRun && current.countedPages.includes(pageKey);
-      const previousKeys = sameRun ? current.savedKeysByPage?.[pageKey] : undefined;
-      // Legacy counts have no content identities; keep their page replay idempotent.
-      if (alreadyCounted && (!savedContentKeys || !previousKeys)) return;
-      const keys = savedContentKeys ? [...new Set(savedContentKeys)] : undefined;
-      const added = keys ? keys.filter((key) => !previousKeys?.includes(key)).length : savedCount;
-      if (added < 1) return;
-      const countedPages = [...new Set([...(sameRun ? current.countedPages : []), pageKey])].slice(-50);
-      const savedKeysByPage = { ...(sameRun ? current.savedKeysByPage : {}) };
-      if (keys) savedKeysByPage[pageKey] = [...new Set([...(previousKeys ?? []), ...keys])];
-      state.creatorDiagnostics[creatorId] = {
-        lastSavedAt: savedAt,
-        lastSavedCount: (sameRun ? current.lastSavedCount : 0) + added,
-        lastSavedFetchRunId: fetchRunId,
-        countedPages,
-        ...(Object.keys(savedKeysByPage).length ? {
-          savedKeysByPage: Object.fromEntries(Object.entries(savedKeysByPage).filter(([key]) => countedPages.includes(key)))
-        } : {})
-      };
-    });
+    await this.update(state => recordCreatorSavedPageInState(state, creatorId, fetchRunId, fetchId, savedCount, savedAt, savedContentKeys));
   }
 
   async mergeCreatorDiagnostics<T extends { creatorId: string }>(creators: readonly T[]): Promise<Array<T & {
@@ -173,7 +166,8 @@ function isValidState(value: unknown): value is AgentLensPluginState {
   if (!isRecord(value) || value.schemaVersion !== 1
       || typeof value.installationId !== "string" || !value.installationId.trim()
       || !isRecord(value.ledger) || !Array.isArray(value.pendingActions)) return false;
-  return value.pendingActions.every(isPendingAction)
+  return (value.schedulerSequence === undefined || (Number.isSafeInteger(value.schedulerSequence) && Number(value.schedulerSequence) >= 0))
+    && value.pendingActions.every(isPendingAction)
     && (value.noteKeysByPath === undefined || (isRecord(value.noteKeysByPath)
       && Object.values(value.noteKeysByPath).every((key) => typeof key === "string")))
     && isCreatorDiagnosticsMap(value.creatorDiagnostics)
@@ -189,6 +183,7 @@ function isUiPreferences(value: unknown): value is PluginUiPreferences {
 
 function isCreatorDiagnosticsMap(value: unknown): value is Record<string, CreatorDiagnostics> {
   return isRecord(value) && Object.values(value).every((entry) => isRecord(entry)
+    && (entry.lastSavedRunSequence === undefined || (Number.isSafeInteger(entry.lastSavedRunSequence) && Number(entry.lastSavedRunSequence) > 0))
     && typeof entry.lastSavedAt === "string"
     && typeof entry.lastSavedCount === "number"
     && entry.lastSavedCount >= 0
@@ -203,7 +198,7 @@ function isCreatorDiagnosticsMap(value: unknown): value is Record<string, Creato
 function isPendingAction(value: unknown): value is PendingAction {
   return isRecord(value)
     && typeof value.id === "string"
-    && ["write_manifest", "result_callback", "media_retry", "remote_action", "scheduler_checkpoint"].includes(String(value.kind))
+    && ["write_manifest", "result_callback", "media_retry", "remote_action", "scheduler_checkpoint", "scheduler_delivery"].includes(String(value.kind))
     && typeof value.createdAt === "string"
     && "payload" in value;
 }
@@ -219,6 +214,8 @@ function recoverState(
   const state = isRecord(value) ? value : {};
   return {
     schemaVersion: 1,
+    ...(Number.isSafeInteger(state.schedulerSequence) && Number(state.schedulerSequence) >= 0
+      ? { schedulerSequence: Number(state.schedulerSequence) } : {}),
     installationId: typeof state.installationId === "string" && state.installationId.trim()
       ? state.installationId
       : createInstallationId(),
@@ -234,6 +231,49 @@ function recoverState(
     creatorDiagnostics: isCreatorDiagnosticsMap(state.creatorDiagnostics)
       ? structuredClone(state.creatorDiagnostics)
       : {},
+    ...(Array.isArray(state.importTasks) ? { importTasks: structuredClone(state.importTasks) as ImportTask[] } : {}),
     uiPreferences: isUiPreferences(state.uiPreferences) ? structuredClone(state.uiPreferences) : {}
   };
+}
+
+/** Commit save statistics together with the local write receipt, before network acknowledgement. */
+export function recordCreatorSavedPageInState(
+  state: AgentLensPluginState, creatorId: string, fetchRunId: string, fetchId: string,
+  savedCount: number, savedAt: string, savedContentKeys?: readonly string[], runSequence?: number
+): void {
+  if (!creatorId || !fetchRunId || !fetchId || savedCount < 1) return;
+  const pageKey = `${fetchRunId}:${fetchId}`;
+
+  const current = state.creatorDiagnostics[creatorId];
+  const sameRun = current?.lastSavedFetchRunId === fetchRunId;
+  if (runSequence !== undefined && (!Number.isSafeInteger(runSequence) || runSequence < 1))
+    throw new Error("Invalid saved run sequence.");
+  if (sameRun && runSequence !== undefined && current.lastSavedRunSequence !== undefined
+      && runSequence !== current.lastSavedRunSequence) throw new Error("Saved run sequence changed.");
+  // Late old work retains its physical receipt, but cannot take ownership of
+  // the current card. Legacy work without an order cannot outrank known work.
+  if (!sameRun && current?.lastSavedRunSequence !== undefined
+      && (runSequence === undefined || runSequence <= current.lastSavedRunSequence)) return;
+  const alreadyCounted = sameRun && current.countedPages.includes(pageKey);
+  const previousKeys = sameRun ? current.savedKeysByPage?.[pageKey] : undefined;
+  // Legacy counts have no content identities; keep their page replay idempotent.
+  if (alreadyCounted && (!savedContentKeys || !previousKeys)) return;
+  const keys = savedContentKeys ? [...new Set(savedContentKeys)] : undefined;
+  const added = keys ? keys.filter((key) => !previousKeys?.includes(key)).length : savedCount;
+  if (added < 1) return;
+  const countedPages = [...new Set([...(sameRun ? current.countedPages : []), pageKey])].slice(-50);
+  const savedKeysByPage = { ...(sameRun ? current.savedKeysByPage : {}) };
+  if (keys) savedKeysByPage[pageKey] = [...new Set([...(previousKeys ?? []), ...keys])];
+  state.creatorDiagnostics[creatorId] = {
+    lastSavedAt: sameRun && Date.parse(current.lastSavedAt) > Date.parse(savedAt) ? current.lastSavedAt : savedAt,
+    ...((runSequence ?? (sameRun ? current.lastSavedRunSequence : undefined)) !== undefined
+      ? { lastSavedRunSequence: runSequence ?? current!.lastSavedRunSequence } : {}),
+    lastSavedCount: (sameRun ? current.lastSavedCount : 0) + added,
+    lastSavedFetchRunId: fetchRunId,
+    countedPages,
+    ...(Object.keys(savedKeysByPage).length ? {
+      savedKeysByPage: Object.fromEntries(Object.entries(savedKeysByPage).filter(([key]) => countedPages.includes(key)))
+    } : {})
+  };
+
 }

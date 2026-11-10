@@ -35,8 +35,13 @@ if (!["full", "single-fetch-review"].includes(profile)) throw new Error("Unknown
 if (!bundle.startsWith(`/* AgentLens release profile: ${profile} */`)) {
   throw new Error("Bundle release profile does not match the requested package.");
 }
+if (profile === "full") {
+  for (const command of ["add-creator-auto-fetch", "sync-due-creators", "Default Auto-Fetch frequency"]) {
+    if (!bundle.includes(command)) throw new Error(`Full bundle is missing Auto Fetch entrypoint: ${command}`);
+  }
+}
 if (profile === "single-fetch-review") {
-  if (target !== "production" || manifest.version !== "0.1.3") throw new Error("Review package must be production 0.1.3.");
+  if (target !== "production") throw new Error("Review package must target production.");
   if (!bundle.includes("bulk-fetch-creator")) throw new Error("Review bundle is missing Bulk Fetch.");
   for (const command of ["add-creator-auto-fetch", "sync-due-creators", "Default Auto-Fetch frequency"]) {
     if (bundle.includes(command)) throw new Error(`Review bundle includes disabled entrypoint: ${command}`);
@@ -57,7 +62,8 @@ for (const [otherTarget, otherApiBase] of Object.entries(apiTargets)) {
 }
 
 // Desktop streaming dependencies must remain lazy, so mobile can load the bundle.
-const allowedDesktopModules = new Set(["node:fs/promises", "node:os", "node:path", "node:http", "node:https", "node:timers", "electron", "@electron/remote", "assert", "buffer", "events", "http", "https", "net", "tls", "url", "util", "stream", "dns"]);
+const allowedDesktopModules = new Set(["node:timers", "node:crypto", "node:fs", "node:fs/promises", "node:os", "node:path", "node:http", "node:https", "electron", "@electron/remote", "assert", "buffer", "events", "http", "https", "net", "tls", "url", "util", "stream", "dns"]);
+
 const bundleAst = ts.createSourceFile("main.js", bundle, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
 function inspectDependencies(node) {
   if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "require") {
@@ -75,6 +81,7 @@ inspectDependencies(bundleAst);
 // A mobile runtime cannot load any desktop dependency, even through an eager wrapper.
 vm.runInNewContext(bundle, {
   module: { exports: {} }, exports: {}, setTimeout, clearTimeout, TextEncoder, TextDecoder,
+  window: { setTimeout, clearTimeout, navigator: {} },
   require(name) {
     if (name !== "obsidian") throw new Error(`Desktop dependency loaded during mobile startup: ${name}`);
     return new Proxy({}, { get: () => class {} });

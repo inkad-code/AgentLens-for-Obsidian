@@ -43,7 +43,7 @@ describe("SupportedPlatforms", () => {
     // 行级 aria-label 保留给读屏但不弹气泡；图标要弹（显示平台名），所以显式重置回 false
     expect(screen.getByLabelText("Bulk Fetch supported platforms")).toBeTruthy();
     expect(styles).toMatch(/\.agentlens-platforms\s*\{[^}]*--no-tooltip:\s*true/);
-    expect(styles).toMatch(/\.agentlens-platforms\s*>\s*span\[aria-label\]\s*\{[^}]*--no-tooltip:\s*false/);
+    expect(styles).toMatch(/\.agentlens-platform-icons\s*>\s*span\[aria-label\]\s*\{[^}]*--no-tooltip:\s*false/);
   });
 
   it("keeps the hover lift on the icons", () => {
@@ -57,7 +57,7 @@ describe("server platform order", () => {
     const platforms = ["zhihu", "youtube", "pinterest", "x"].map(id => ({id,label:id,single:true,profile:id!=="x",autoFetch:false,available:true}));
     const catalog = {clientType:"obsidian_plugin",platforms};
     const view = render(<SupportedPlatforms capabilities={null} publicCatalog={catalog} mode="single" />);
-    const ids = () => [...view.container.querySelectorAll(".agentlens-platforms > span[aria-label]")].map(x=>x.getAttribute("aria-label"));
+    const ids = () => [...view.container.querySelectorAll(".agentlens-platform-icons > span[aria-label]")].map(x=>x.getAttribute("aria-label"));
     expect(ids()).toEqual(["zhihu","youtube","pinterest","x"]);
     view.rerender(<SupportedPlatforms capabilities={null} publicCatalog={catalog} mode="profile" />);
     expect(ids()).toEqual(["zhihu","youtube","pinterest"]);

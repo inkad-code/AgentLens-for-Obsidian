@@ -1,6 +1,9 @@
 import singleDemoImage from "./assets/onboarding/single-demo.png";
 import metadataImage from "./assets/onboarding/metadata.png";
 import saveObsidianImage from "./assets/onboarding/save-obsidian.png";
+import autoCreatorImage from "./assets/onboarding/auto-creator.png";
+import autoScheduleImage from "./assets/onboarding/auto-schedule.png";
+import autoSaveImage from "./assets/onboarding/auto-save.png";
 
 type WorkflowOnboardingVariant = "single" | "bulk" | "auto";
 
@@ -10,7 +13,7 @@ const content: Record<WorkflowOnboardingVariant, { title: string; description: s
     description: "We've prepared a sample link for you. Test the full workflow with one click.",
     steps: [
       ["Start with Demo URL", "Use the pre-filled link to experience the preview process."],
-      ["Complete & Clear Metadata", "Access complete and clear metadata parsed from web sources."],
+      ["Preview Note", "Preview the note to be saved to Obsidian vault with source information and tags."],
       ["Save to Obsidian", "Preview AI auto-tagged media and save everything in 1-click."]
     ]
   },
@@ -18,9 +21,9 @@ const content: Record<WorkflowOnboardingVariant, { title: string; description: s
     title: "Try Your First Sync, Zero Setup Required",
     description: "We've prepared a sample link for you. Test the full workflow with one click.",
     steps: [
-      ["Start with Demo URL", "Use the pre-filled link to review a creator's posts."],
-      ["Complete & Clear Metadata", "Access complete and clear metadata parsed from web sources."],
-      ["Save to Obsidian", "Preview selected posts and save everything in 1-click."]
+      ["Start with Demo URL", "Use the pre-filled link to experience the preview process."],
+      ["Preview Note", "Preview the note to be saved to Obsidian vault with source information and tags."],
+      ["Save to Obsidian", "Preview AI auto-tagged media and save everything in 1-click."]
     ]
   },
   auto: {
@@ -36,7 +39,9 @@ const content: Record<WorkflowOnboardingVariant, { title: string; description: s
 
 export function WorkflowOnboarding({ variant, onRequestSignUp }: { variant: WorkflowOnboardingVariant; onRequestSignUp?: (() => void) | undefined }) {
   const current = content[variant];
-  const illustrations = [singleDemoImage, metadataImage, saveObsidianImage];
+  const illustrations = variant === "auto"
+    ? [autoCreatorImage, autoScheduleImage, autoSaveImage]
+    : [singleDemoImage, metadataImage, saveObsidianImage];
   const titleId = `agentlens-onboarding-title-${variant}`;
   return (
     <section className={`agentlens-onboarding agentlens-onboarding-${variant}`} aria-labelledby={titleId}>

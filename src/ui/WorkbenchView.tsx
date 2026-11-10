@@ -108,16 +108,35 @@ export class WorkbenchView extends ItemView {
             await this.app.workspace.revealLeaf(leaf);
           }).catch(() => { new Notice("Unable to reveal this folder in Obsidian."); });
         }}
-        onOpenNote={(path) => {
-          const file = this.app.vault.getAbstractFileByPath(path);
-          if (file instanceof TFile) {
-            const leaf = this.app.workspace.getLeavesOfType("markdown").find(candidate => candidate !== this.leaf)
-              ?? this.app.workspace.getLeaf("split");
-            void leaf.openFile(file, { active: true });
-          }
-        }}
+        onOpenNote={(path) => { void this.openSavedNote(path); }}
       /></HostDocumentContext.Provider></RemoteImageContext.Provider>
 );
+  }
+
+  private async openSavedNote(path: string): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) {
+      new Notice("Unable to find the saved note in this vault.");
+      return;
+    }
+
+    const { workspace } = this.app;
+    try {
+      const mainRoot = workspace.rootSplit;
+      let leaf = workspace.getLeavesOfType("markdown")
+        .find(candidate => candidate !== this.leaf && candidate.getRoot() === mainRoot);
+      if (!leaf) {
+        // Create the tab in the main workspace even when the AgentLens pop-out has focus.
+        const mainLeaf = workspace.getMostRecentLeaf(mainRoot);
+        leaf = mainLeaf && mainLeaf.view.getViewType() === "empty"
+          ? mainLeaf
+          : workspace.createLeafInParent(mainLeaf?.parent ?? mainRoot, 0);
+      }
+      await leaf.openFile(file, { active: true });
+      await workspace.revealLeaf(leaf);
+    } catch {
+      new Notice("Unable to open this note in Obsidian.");
+    }
   }
 
   async onClose(): Promise<void> {

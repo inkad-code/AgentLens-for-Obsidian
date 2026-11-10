@@ -9,8 +9,8 @@ for (const file of sourceFiles.filter((path) => [".ts", ".tsx"].includes(extname
   check(file, source, /\bconsole\.(?:log|debug|info|warn|error)\s*\(/, "Do not log source URLs, tokens or plugin payloads.");
   check(file, source, /\b(?:window|globalThis)\.fetch\s*\(/, "Use Obsidian requestUrl through the AgentLens transport.");
   check(file, source, /\b(?:localStorage|sessionStorage)\b/, "Persist through PluginStateStore or SecretStorage.");
-  if (file !== "src/vault/DesktopMediaDownloader.ts") check(file, source, /(?:from\s+|import\s*\()["'](?:node:|electron(?:["'/])|fs(?:["'/])|path(?:["'/])|os(?:["'/])|child_process(?:["'/]))/, "Mobile-compatible source must not import Node or Electron modules.");
-  if (file !== "src/vault/DesktopMediaDownloader.ts") check(file, source, /\brequire\s*\(/, "Use ESM source imports; CommonJS require can hide mobile-incompatible dependencies.");
+  if (!["src/vault/DesktopMediaDownloader.ts", "src/vault/DesktopExecutionTarget.ts"].includes(file)) check(file, source, /(?:from\s+|import\s*\()["'](?:node:|electron(?:["'/])|fs(?:["'/])|path(?:["'/])|os(?:["'/])|child_process(?:["'/]))/, "Mobile-compatible source must not import Node or Electron modules.");
+  if (!["src/vault/DesktopMediaDownloader.ts", "src/vault/DesktopExecutionTarget.ts"].includes(file)) check(file, source, /\brequire\s*\(/, "Use ESM source imports; CommonJS require can hide mobile-incompatible dependencies.");
   check(file, source, /\bBuffer(?:\.|\[|\()/, "Use ArrayBuffer or Uint8Array instead of the Node Buffer API.");
 }
 
@@ -33,7 +33,7 @@ function check(file, source, pattern, message) {
 async function walk(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
   const nested = await Promise.all(entries.map((entry) => {
-    const path = join(directory, entry.name);
+    const path = join(directory, entry.name).replaceAll("\\", "/");
     return entry.isDirectory() ? walk(path) : [path];
   }));
   return nested.flat();

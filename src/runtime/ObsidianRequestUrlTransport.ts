@@ -93,15 +93,16 @@ function ensureTrailingSlash(value: string): string {
   return value.endsWith("/") ? value : `${value}/`;
 }
 
-interface ErrorDetails { code?: string; message: string; requestId?: string; execution?: AgentLensError["execution"] }
+interface ErrorDetails {
+  details?: unknown; code?: string; message: string; requestId?: string; execution?: AgentLensError["execution"] }
 
 function executionHttpError(status: number, details: ErrorDetails, requestId: string): AgentLensError {
   if (details.code && ["QUOTA_EXCEEDED", "QUOTA_EXHAUSTED", "INSUFFICIENT_QUOTA"].includes(details.code)) {
-    return new AgentLensError("quota_exhausted", "Not enough credits to parse this link. Check Billing & Usage to add credits or wait for your quota to reset.", false, status, undefined, requestId, details.execution, details.code);
+    return new AgentLensError("quota_exhausted", "Not enough credits to parse this link. Check Manage plan to add credits or wait for your quota to reset.", false, status, undefined, requestId, details.execution, details.code, details.details);
   }
   const classified = classifyHttpError(status, details.message, requestId);
   return new AgentLensError(classified.code, classified.message, details.execution?.retryable ?? classified.retryable,
-    status, undefined, requestId, details.execution, details.code);
+    status, undefined, requestId, details.execution, details.code, details.details);
 }
 
 function safeErrorDetails(text: string, status: number): ErrorDetails {
@@ -114,12 +115,13 @@ function safeErrorDetails(text: string, status: number): ErrorDetails {
     const execution = raw && typeof raw === "object" ? {
       retryable: typeof raw.retryable === "boolean" ? raw.retryable : undefined,
       retryAt: typeof raw.retryAt === "string" && Number.isFinite(Date.parse(raw.retryAt)) ? raw.retryAt : undefined,
+      retryAfterSeconds: typeof raw.retryAfterSeconds === "number" && Number.isSafeInteger(raw.retryAfterSeconds) && raw.retryAfterSeconds > 0 ? raw.retryAfterSeconds : undefined,
       failureClass: typeof raw.failureClass === "string" ? raw.failureClass : undefined,
       chargedUnits: typeof raw.chargedUnits === "number" ? raw.chargedUnits : undefined
     } : undefined;
     return { ...(code ? { code } : {}),
       message: typeof message === "string" && message.trim() ? message.slice(0, 300) : `AgentLens request failed with HTTP ${status}.`,
-      ...(requestId ? { requestId } : {}), execution };
+      ...(requestId ? { requestId } : {}), execution, ...(code === "CHECKOUT_REPLACEMENT_REQUIRED" ? { details: raw } : {}) };
   } catch {
     // Error bodies are untrusted; never surface raw HTML or token-bearing payloads.
   }

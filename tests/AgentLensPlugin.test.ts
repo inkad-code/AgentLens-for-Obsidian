@@ -1,5 +1,7 @@
+import "fake-indexeddb/auto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import AgentLensPlugin from "@/main";
+import type { PluginStateStore } from "@/runtime/PluginStateStore";
 import { DEFAULT_SETTINGS } from "@/settings";
 import { Platform, type App, type PluginManifest } from "obsidian";
 import { DESKTOP_MEDIA_DOWNLOAD_LIMIT, MOBILE_MEDIA_DOWNLOAD_LIMIT, mediaDownloadLimit } from "@/core/platformPolicy";
@@ -16,7 +18,10 @@ interface PluginHarness {
 function host() {
   let layoutReady: (() => void) | undefined;
   const secrets = new Map<string, string>();
+  const local = new Map<string, unknown>();
   const app = {
+    loadLocalStorage: (key: string) => structuredClone(local.get(key)),
+    saveLocalStorage: (key: string, value: unknown) => { local.set(key, structuredClone(value)); },
     secretStorage: {
       getSecret: (key: string) => secrets.get(key) ?? "",
       setSecret: (key: string, value: string) => { secrets.set(key, value); }
@@ -59,11 +64,11 @@ describe("AgentLensPlugin host adapter", () => {
   });
 
   it("registers one host-independent coordinator, commands, ribbon and native Settings tab", async () => {
-    vi.useFakeTimers();
     const fixture = host();
     const plugin = pluginFor(fixture.app);
 
     await plugin.onload();
+    vi.useFakeTimers();
 
     expect(plugin.__ribbons).toEqual([expect.objectContaining({ icon: "agentlens-brand", title: "Open AgentLens" })]);
     expect(plugin.__commands.map((command) => command.id)).toEqual([
@@ -84,6 +89,19 @@ describe("AgentLensPlugin host adapter", () => {
 
     plugin.onunload();
     vi.advanceTimersByTime(180_000);
+  });
+
+  it("starts even if a previous instance left the verification action registered", async () => {
+    const plugin = pluginFor(host().app);
+    const registerHandler = vi.spyOn(plugin, "registerObsidianProtocolHandler").mockImplementation(() => {
+      throw new Error('Action "agentlens-human-verification" is already registered as a handler.');
+    });
+
+    await plugin.onload();
+
+    expect(registerHandler).not.toHaveBeenCalled();
+    expect(plugin.__settingTabs).toHaveLength(1);
+    plugin.onunload();
   });
 
   it("opens a native pop-out once, reuses it, and recreates it after closing", async () => {
@@ -156,12 +174,9 @@ describe("AgentLensPlugin host adapter", () => {
         defaultAutoEvery: 2,
         defaultAutoUnit: "day",
         defaultAutoPreferredTime: "08:30"
-      },
-      agentlensState: {
-        ledger: {},
-        pendingActions: []
       }
     });
+    expect(plugin.__getData()).not.toHaveProperty("agentlensState");
     expect(JSON.stringify(plugin.__getData())).not.toMatch(/accessToken|refreshToken|Bearer/i);
     plugin.onunload();
   });
@@ -169,26 +184,18 @@ describe("AgentLensPlugin host adapter", () => {
   it("copies a bounded diagnostic summary without paths, note bodies or secret material", async () => {
     const fixture = host();
     const plugin = pluginFor(fixture.app);
-    plugin.__setData({
-      agentlensState: {
-        schemaVersion: 1,
-        installationId: "12345678-secret-installation-tail",
-        refreshTokenSecretId: "agentlens-refresh-private-reference",
-        ledger: {
-          "youtube:one": {
-            notePath: "Private/Vault/Research.md",
-            sourceUrl: "https://example.com/private-source"
-          }
-        },
-        pendingActions: [{ id: "pending-secret", kind: "result_callback", createdAt: "2026-08-20T00:00:00Z", payload: {} }]
-      }
+    await plugin.onload();
+    const store = (plugin as unknown as {stateStore: PluginStateStore}).stateStore;
+    const state = await store.update(state => {
+      state.ledger = { "youtube:one": { notePath: "Private/Vault/Research.md", sourceUrl: "https://example.com/private-source" } } as unknown as typeof state.ledger;
+      state.pendingActions = [{ id: "pending-secret", kind: "result_callback", createdAt: "2026-08-20T00:00:00Z", payload: {} }];
     });
+    const shortId = state.installationId.slice(0, 8);
     const writeText = vi.fn(async (_text: string) => undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
 
-    await plugin.onload();
     expect(plugin.diagnosticsSummarySnapshot()).toMatchObject({
-      shortInstallationId: "12345678",
+      shortInstallationId: shortId,
       pendingActions: 1,
       ledgerEntries: 1
     });
@@ -196,7 +203,7 @@ describe("AgentLensPlugin host adapter", () => {
 
     expect(writeText).toHaveBeenCalledTimes(1);
     const copied = String(writeText.mock.calls[0]?.[0]);
-    expect(copied).toContain('"shortInstallationId": "12345678"');
+    expect(copied).toContain(`"shortInstallationId": "${shortId}"`);
     expect(copied).toContain('"pendingActions": 1');
     expect(copied).toContain('"ledgerEntries": 1');
     expect(copied).not.toMatch(/Private\/Vault|private-source|refresh-private|pending-secret/);
@@ -222,4 +229,10 @@ describe("AgentLensPlugin host adapter", () => {
     Object.assign(Platform, { isMobile: false, isIosApp: false, isAndroidApp: false });
     expect(mediaDownloadLimit(Platform.isMobile)).toBe(DESKTOP_MEDIA_DOWNLOAD_LIMIT);
   });
+});
+
+it('cancels active manual downloads before plugin teardown', async()=>{
+  const fixture=host();const plugin=pluginFor(fixture.app);await plugin.onload();
+  const service=(plugin as unknown as {workbenchService:{cancelManualSaves():void}}).workbenchService;
+  const cancel=vi.spyOn(service,'cancelManualSaves');plugin.onunload();expect(cancel).toHaveBeenCalledOnce();
 });

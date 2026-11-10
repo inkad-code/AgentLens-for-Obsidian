@@ -1,3 +1,4 @@
+import "fake-indexeddb/auto";
 import { readFileSync } from "node:fs";
 import { runInThisContext } from "node:vm";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -20,7 +21,10 @@ import type { JsonTransport } from "@/runtime/ObsidianRequestUrlTransport";
 
 function harness(PluginClass = AgentLensPlugin) {
   const onLayoutReady = vi.fn();
+  const local = new Map<string, unknown>();
   const plugin = new PluginClass({
+    loadLocalStorage: (key: string) => structuredClone(local.get(key)),
+    saveLocalStorage: (key: string, value: unknown) => { local.set(key, structuredClone(value)); },
     secretStorage: { getSecret: () => "", setSecret: vi.fn() },
     workspace: { onLayoutReady }, vault: {}, fileManager: {}
   } as unknown as obsidian.App, { id: "agentlens-social-importer", version: "0.1.0" } as obsidian.PluginManifest);
@@ -69,9 +73,9 @@ describe("Single Fetch review profile", () => {
   });
 
   it("does not register scheduler lifecycle callbacks, timers or automatic commands", async () => {
-    vi.useFakeTimers();
     const { plugin, onLayoutReady } = harness();
     await plugin.onload();
+    vi.useFakeTimers();
     const host = plugin as unknown as { __commands: Array<{ id: string }>; __intervals: number[] };
     expect(host.__commands.map(command => command.id)).toEqual(["open-panel", "fetch-current-link", "fetch-from-clipboard", "bulk-fetch-creator"]);
     expect(onLayoutReady).not.toHaveBeenCalled();
@@ -88,7 +92,7 @@ describe("Single Fetch review profile", () => {
     const loadData = vi.fn(async () => ({}));
     const saveData = vi.fn();
     const service = new AgentLensWorkbenchService(
-      { accessToken } as unknown as AuthService, { demoFetch: vi.fn(async () => ({
+      { accessToken, sessionEpoch: () => 0 } as unknown as AuthService, { demoFetch: vi.fn(async () => ({
         fetchId: "demo", mode: "single_post", platform: "x", page: null,
         content: [{ platform: "x", contentId: "demo", canonicalUrl: DEMO_URL, text: "Server demo",
           author: { id: "spacex", displayName: "SpaceX" }, media: [] }],
@@ -113,7 +117,7 @@ describe("Single Fetch review profile", () => {
   it("allows Bulk Fetch to reach its normal authentication boundary", async () => {
     const accessToken = vi.fn(async () => null);
     const service = new AgentLensWorkbenchService(
-      { accessToken } as unknown as AuthService, {} as AgentLensApiPort,
+      { accessToken, sessionEpoch: () => 0 } as unknown as AuthService, {} as AgentLensApiPort,
       {} as VaultWriter, new PluginStateStore({ loadData: async () => ({}), saveData: async () => {} })
     );
     await expect(service.fetchProfilePage("https://youtube.com/@creator", null)).rejects.toThrow("Sign in before fetching a creator profile.");
