@@ -39,8 +39,7 @@ export function EmailAuthPage({mode,busy,browserPending,browserOpening,browserEr
  const emailInput=useRef<HTMLInputElement>(null);
  const agreementInput=useRef<HTMLInputElement>(null);
  const registration=mode==='register';
- const requiresAgreement=registration || !compact;
- const agreementMissing=requiresAgreement && !agreed;
+ const agreementMissing=!agreed;
  function changeResetView(next:boolean) {
   setResetView(next);setError(null);setInvalidField(null);
   setPassword("");setConfirm("");setVisible(false);
@@ -94,7 +93,7 @@ export function EmailAuthPage({mode,busy,browserPending,browserOpening,browserEr
       </div>
      </div>
     </>}
-    {requiresAgreement && <label className="agentlens-auth-terms"><input ref={agreementInput} type="checkbox" aria-invalid={invalidField === "terms" || undefined} aria-describedby={invalidField === "terms" ? feedbackId : undefined} style={{backgroundImage:agreed ? `url(${JSON.stringify(authAssets.imgCheck)})` : undefined}} checked={agreed} onChange={event=>{setAgreed(event.currentTarget.checked);clearValidationError("terms");}} required disabled={busy} /><span>I agree to the <a href="https://agentlensapi.io/terms" target="_blank" rel="noreferrer">Terms of Service</a> and <a href="https://agentlensapi.io/privacy" target="_blank" rel="noreferrer">Privacy Policy</a></span></label>}
+    <label className="agentlens-auth-terms"><input ref={agreementInput} type="checkbox" aria-invalid={invalidField === "terms" || undefined} aria-describedby={invalidField === "terms" ? feedbackId : undefined} style={{backgroundImage:agreed ? `url(${JSON.stringify(authAssets.imgCheck)})` : undefined}} checked={agreed} onChange={event=>{setAgreed(event.currentTarget.checked);clearValidationError("terms");}} required disabled={busy} /><span>I agree to the <a href="https://agentlensapi.io/terms" target="_blank" rel="noreferrer">Terms of Service</a> and <a href="https://agentlensapi.io/privacy" target="_blank" rel="noreferrer">Privacy Policy</a></span></label>
     {browserPending && <p role="status">Finish Google sign-in in your browser, then return to Obsidian. Sign-in will finish automatically.</p>}
     {(error || browserError) && <p id={feedbackId} className="agentlens-inline-error" role="alert">{error || browserError}</p>}
  </>;

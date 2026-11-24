@@ -33,8 +33,12 @@ export class ObsidianMediaDownloader {
     }).catch((error: unknown) => {
       signal?.throwIfAborted();
       // Some host versions reject HTTP responses even with throw:false.
-      if (error && typeof error === "object" && "status" in error && error.status === 403) throw MediaDownloadError.http(403);
-      throw error;
+      if (error && typeof error === "object" && "status" in error && typeof error.status === "number"
+        && error.status >= 100 && error.status <= 599) {
+        if (error.status === 403) throw MediaDownloadError.http(403);
+        throw error;
+      }
+      throw MediaDownloadError.network();
     }), signal, 120_000);
     signal?.throwIfAborted();
     if (response.status < 200 || response.status >= 300) {
@@ -88,7 +92,7 @@ function abortable<T>(promise: Promise<T>, signal?: AbortSignal, timeoutMs?: num
       callback();
     };
     const abort = () => finish(() => reject(signal?.reason instanceof Error ? signal.reason : new DOMException("Download cancelled", "AbortError")));
-    const timer = timeoutMs === undefined ? undefined : window.setTimeout(() => finish(() => reject(new Error("Media download timed out. Please retry the failed attachment."))), timeoutMs);
+    const timer = timeoutMs === undefined ? undefined : window.setTimeout(() => finish(() => reject(MediaDownloadError.network("Media download timed out. Please retry the failed attachment."))), timeoutMs);
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) abort();
     promise.then(value => finish(() => resolve(value)), error => finish(() => reject(error instanceof Error ? error : new Error("Media download failed."))));

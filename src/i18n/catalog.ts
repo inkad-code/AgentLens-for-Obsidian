@@ -2,9 +2,11 @@ import { taskEnglish, taskSimplified, taskTraditional } from "./taskCatalog";
 export type Locale = "en" | "zh-CN" | "zh-TW";
 
 const english = {
+  "entitlement.manage": "Manage Plan",
   ...taskEnglish,
   "bulk.noFilterMatches": "No loaded posts match the current filters.",
   "bulk.clearFilters": "Clear filters",
+  "bulk.allPostsLoaded": "All available posts have been loaded.",
   "bulk.previewLoading": "Loading preview…",
   "bulk.previewContentLoading": "Loading…",
   "bulk.saveWaitingForDetails": "Waiting for details",
@@ -15,6 +17,7 @@ const english = {
   "bulk.previewRetryExhausted": "Details could not be completed after 3 attempts. Contact Support for help.",
   "bulk.saveDetailsUnavailable": "Post details for “{title}” are unavailable from this list. Open the original link in Single post fetch or deselect this post to save the others.",
   "bulk.saveRefreshRequired": "Fetch the creator’s post list again to check whether “{title}” is ready to save.",
+  "save.mediaNetworkFailure": "Note saved. A network error interrupted the attachment download. Check your connection, turn on your proxy or VPN if needed, then retry.",
   "note.properties": "Properties",
   "note.propertiesLabel": "Note properties",
   "creator.search": "Search creators",
@@ -33,6 +36,7 @@ const english = {
   "app.subtitle": "Social research notes for this vault",
   "nav.single": "Single Fetch",
   "nav.bulk": "Bulk Fetch",
+  "nav.transcript": "Transcript",
   "nav.auto": "Auto-fetch",
   "nav.activity": "Activity",
   "nav.settings": "Settings",
@@ -66,9 +70,11 @@ const english = {
 export type TranslationKey = keyof typeof english;
 
 const simplified: Partial<Record<TranslationKey, string>> = {
+  "entitlement.manage": "管理套餐",
   ...taskSimplified,
   "bulk.noFilterMatches": "当前加载的帖子中没有符合筛选条件的内容。",
   "bulk.clearFilters": "清除筛选",
+  "bulk.allPostsLoaded": "所有可获取的作品已加载完成。",
   "bulk.previewLoading": "正在加载预览…",
   "bulk.previewContentLoading": "正在加载…",
   "bulk.saveWaitingForDetails": "等待补全",
@@ -79,6 +85,7 @@ const simplified: Partial<Record<TranslationKey, string>> = {
   "bulk.previewRetryExhausted": "已尝试 3 次，仍未能补全详情。请联系支持获取帮助。",
   "bulk.saveDetailsUnavailable": "此列表无法补全「{title}」的作品详情。请在单作品页打开原链接，或取消勾选这条作品以保存其他作品。",
   "bulk.saveRefreshRequired": "请重新解析达人主页，确认「{title}」是否可以保存。",
+  "save.mediaNetworkFailure": "笔记已保存。附件下载遇到网络问题。请检查网络连接，必要时开启代理或 VPN，再点击重试。",
   "note.properties": "笔记属性",
   "note.propertiesLabel": "笔记属性",
   "creator.search": "搜索创作者",
@@ -97,6 +104,7 @@ const simplified: Partial<Record<TranslationKey, string>> = {
   "app.subtitle": "将社交内容整理为当前仓库中的研究笔记",
   "nav.single": "单条抓取",
   "nav.bulk": "批量抓取",
+  "nav.transcript": "字幕",
   "nav.auto": "自动抓取",
   "nav.activity": "活动记录",
   "nav.settings": "设置",
@@ -127,9 +135,11 @@ const simplified: Partial<Record<TranslationKey, string>> = {
 };
 
 const traditional: Partial<Record<TranslationKey, string>> = {
+  "entitlement.manage": "管理方案",
   ...taskTraditional,
   "bulk.noFilterMatches": "目前載入的貼文中沒有符合篩選條件的內容。",
   "bulk.clearFilters": "清除篩選",
+  "bulk.allPostsLoaded": "所有可取得的作品已載入完成。",
   "bulk.previewLoading": "正在載入預覽…",
   "bulk.previewContentLoading": "正在載入…",
   "bulk.saveWaitingForDetails": "等待補全",
@@ -140,6 +150,7 @@ const traditional: Partial<Record<TranslationKey, string>> = {
   "bulk.previewRetryExhausted": "已嘗試 3 次，仍未能補全詳情。請聯絡支援取得協助。",
   "bulk.saveDetailsUnavailable": "此清單無法補全「{title}」的貼文詳情。請在單篇貼文頁面開啟原始連結，或取消勾選這篇貼文以儲存其他貼文。",
   "bulk.saveRefreshRequired": "請重新解析創作者主頁，確認「{title}」是否可以儲存。",
+  "save.mediaNetworkFailure": "筆記已儲存。附件下載遇到網路問題。請檢查網路連線，必要時開啟代理或 VPN，再按重試。",
   "note.properties": "筆記屬性",
   "note.propertiesLabel": "筆記屬性",
   "creator.search": "搜尋創作者",
@@ -158,6 +169,7 @@ const traditional: Partial<Record<TranslationKey, string>> = {
   "app.subtitle": "將社交內容整理為目前知識庫中的研究筆記",
   "nav.single": "單筆擷取",
   "nav.bulk": "批次擷取",
+  "nav.transcript": "字幕",
   "nav.auto": "自動擷取",
   "nav.activity": "活動記錄",
   "nav.settings": "設定",

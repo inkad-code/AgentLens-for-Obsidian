@@ -13,6 +13,8 @@ export class BulkSession {
   private nextCursor: string | null = null;
   private readonly pageUsage: Array<{ fetchId: string; pageNumber: number; charged: boolean; units: number; remaining: number | null }> = [];
 
+  constructor(private readonly options: { demo?: boolean } = {}) {}
+
   async load(
     cursor: string | null,
     loader: (cursor: string | null) => Promise<FetchPage>
@@ -43,7 +45,7 @@ export class BulkSession {
   async supplement(key: string, loader: (preview: PreviewResult) => Promise<PreviewResult>): Promise<PreviewResult> {
     const current = this.items.get(key);
     if (!current) throw new Error("This post is no longer in the loaded list.");
-    if (current.post.needSupplement !== true) return current;
+    if (current.demo || current.trial || current.post.needSupplement !== true) return current;
     if (current.historyRestore) throw new Error("This saved post is incomplete. History restoration never requests new details.");
     const pending = this.details.get(key);
     if (pending) return pending;
@@ -137,10 +139,11 @@ export class BulkSession {
       this.items.set(key, (this.completeDetails.get(key)?.fetchId === page.fetchId ? this.completeDetails.get(key) : undefined) ?? {
         post,
         ...(page.historyRestore ? { historyRestore: true } : {}),
+        ...(page.trial ? { trial: true } : {}),
         fetchId: page.fetchId,
         usageRemaining: page.usage.remaining,
         usage: page.usage,
-        demo: false
+        demo: !page.trial && this.options.demo === true
       });
     }
     if (!this.pageUsage.some((receipt) => receipt.fetchId === page.fetchId)) {

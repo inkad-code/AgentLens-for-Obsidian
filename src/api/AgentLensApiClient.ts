@@ -1,4 +1,5 @@
 import { hasAsciiControl } from "../core/controlCharacters";
+import type { TrialApi, TrialBalance, TrialExperience, TrialReply } from "../workbench/ManualTrial";
 import {validateSharedSettings} from "./shared-settings";
 import { pinterestBoardUrl } from "../core/pinterest-board";
 import type { CreatorLocalStatus } from "../auto-fetch/creator-status";
@@ -12,9 +13,11 @@ import type { DeviceAuthorization, DevicePollResult, AccountCapabilities, Public
 import { validatePublicPlatformCatalog, validateAccountCapabilities, validateDeviceAuthorization } from "./contracts";
 import type { MediaPolicy, NormalizedMedia, NormalizedPost } from "../core/domain";
 import type { JsonTransport } from "../runtime/ObsidianRequestUrlTransport";
+import { ACCOUNT_TRANSCRIPT_CREDITS, type CaptionTrack, type TranscriptApi, type TranscriptChild, type TranscriptIdentity, type TranscriptReceipt } from "./transcript";
 import { executionInteger, validateExecution, validateRecovery } from "./executions";
 import type { ExecutionOperation, ExecutionRecovery } from "./executions";
-import { validatePendingCheckout, validatePlans, validateDashboard, validateIntent, validateChange, record, text, secureBillingUrl, type BillingPort } from "./billing";
+import { validatePendingCheckout, validatePlans, validateDashboard, validateIntent, validateChange, validateLifecycleActions, validateLifecyclePending, validateLifecycleState, validateLifecycleCheckout, record, text, secureBillingUrl, type BillingPort } from "./billing";
+import { AgentLensError } from "../core/errors";
 
 export interface AgentLensClientIdentity {
   targetId?: string;
@@ -45,6 +48,7 @@ export interface AccountSummary {
 
 export interface FetchPage {
   historyRestore?: boolean;
+  trial?: { outcome: "success" | "success_empty" };
   fetchId: string;
   mode: "single_post" | "profile_page";
   platform: string;
@@ -291,8 +295,26 @@ export class AgentLensApiClient implements AuthApi {
     return {
       plans: () => get("/plans", validatePlans),
       dashboard: () => get("/me/dashboard", validateDashboard),
-      createIntent: selection => post("/billing/purchase-intents", { ...selection, sourcePage: "obsidian/plans" }, validateIntent),
+      createIntent: selection => post(selection.plan === "basic" ? "/billing/lifecycle/basic-selection" : "/billing/purchase-intents", { ...selection, sourcePage: "obsidian/plans" }, validateIntent),
       intent: id => get(`/billing/purchase-intents/${encodeURIComponent(id)}`, validateIntent),
+      lifecycleState: () => get("/billing/lifecycle/state", validateLifecycleState),
+      lifecycleRestoreRenewal: confirmation => post("/billing/lifecycle/renewal/restore", confirmation, value => ({status: text(record(value).status)})),
+      lifecycleCancelFuture: (id, stateVersion) => post("/billing/lifecycle/futures/" + encodeURIComponent(id) + "/cancel", {stateVersion, confirmed: true}, value => ({status: text(record(value).status)})),
+      lifecyclePending: async () => {
+        try { return await get("/billing/lifecycle/pending", validateLifecyclePending); }
+        catch (error) { if ((error as { status?: number }).status === 404) return null; throw error; }
+      },
+      lifecycleActions: async () => {
+        try { return await get("/billing/lifecycle/actions", validateLifecycleActions); }
+        catch (error) {
+          // Only explicit non-enrollment permits the established billing flow.
+          if (error instanceof AgentLensError && error.status === 404 && error.serverCode === "LIFECYCLE_NOT_ENABLED") return null;
+          throw error;
+        }
+      },
+      lifecycleCheckout: (intentId, action) => post("/billing/lifecycle/checkout", {intentId, mode: action.mode, stateVersion: action.stateVersion, requestKey: `obsidian:${intentId}`, confirmed: true, futureId: action.futureId ?? null, replacesIntentId: action.replacesIntentId ?? null, confirmedAmountMinor: action.amountMinor ?? null}, validateLifecycleCheckout),
+      lifecycleResume: intentId => post(`/billing/lifecycle/purchases/${encodeURIComponent(intentId)}/resume`, {}, validateLifecycleCheckout),
+      lifecycleReconcile: intentId => post(`/billing/lifecycle/purchases/${encodeURIComponent(intentId)}/reconcile`, {}, value => ({status: text(record(value).status)})),
       paymentOptions: (plan, billingCycle) => get(`/billing/payment-options?plan=${encodeURIComponent(plan)}&billingCycle=${encodeURIComponent(billingCycle)}`, value => {
         const data = record(value);
         if (typeof data.walletAvailable !== "boolean") throw new Error("Invalid payment availability.");
@@ -307,7 +329,7 @@ export class AgentLensApiClient implements AuthApi {
         return { checkoutUrl: secureBillingUrl(data.checkoutUrl, "checkout"), status: text(data.status) };
       }),
       change: (action, plan, billingCycle) => post(`/billing/subscriptions/${action}`, { plan, billingCycle }, validateChange),
-      portal: () => post("/billing/portal", {}, value => ({ portalUrl: secureBillingUrl(record(value).portalUrl, "portal") })),
+      portal: (lifecycle = false) => post("/billing/portal", {}, value => ({ portalUrl: secureBillingUrl(record(value).portalUrl, lifecycle ? "lifecyclePortal" : "portal") })),
       subscription: action => post(`/billing/subscriptions/${action}`, {}, value => { text(record(value).status); })
     };
   }
@@ -334,7 +356,25 @@ export class AgentLensApiClient implements AuthApi {
     });
   }
 
+  startRegistrationVerification(): Promise<{pollToken: string; verificationUrl: string; expiresIn: number; interval: number}> {
+    return this.transport.json({path: "/auth/plugin-registration/start", method: "POST", installationId: this.identity.installationId}, value => {
+      const row = requireRecord(value);
+      return {pollToken: requireString(row.pollToken, "pollToken"), verificationUrl: requireString(row.verificationUrl, "verificationUrl"),
+        expiresIn: 240, interval: 2};
+    });
+  }
+
+  pollRegistrationVerification(pollToken: string): Promise<{status: string}> {
+    return this.transport.json({path: "/auth/plugin-registration/poll", method: "POST", installationId: this.identity.installationId,
+      body: {pollToken}}, value => ({status: requireString(requireRecord(value).status, "status")}));
+  }
+
   authenticateEmail(credentials: EmailCredentials): Promise<string> {
+    if (credentials.name !== undefined && credentials.registrationPollToken) {
+      return this.transport.json({path: "/auth/plugin-registration/signup", method: "POST", installationId: this.identity.installationId,
+        body: {email: credentials.email, password: credentials.password, name: credentials.name, pollToken: credentials.registrationPollToken}
+      }, value => requireString(requireRecord(value).token, "token"));
+    }
     return this.transport.json({
       path: credentials.name === undefined ? "/auth/login" : "/auth/signup",
       method: "POST",
@@ -463,6 +503,50 @@ export class AgentLensApiClient implements AuthApi {
       method: "GET"
     }, validateFetchPage);
   }
+
+  readonly trial: TrialApi = {
+    experience: credential => this.data({ path: "/v1/trials/obsidian/experience", method: "POST", trialCredential: credential }, validateTrialExperience),
+    link: (credential, token) => this.data({ path: "/v1/trials/obsidian/link", method: "POST", trialCredential: credential,
+      accessToken: token, installationId: this.identity.installationId }, validateTrialExperience),
+    fetch: (credential, key, body, token) => this.data({ path: "/v1/trials/obsidian/fetch", method: "POST", trialCredential: credential,
+      idempotencyKey: key, body, ...(token ? { accessToken: token, installationId: this.identity.installationId } : {}) }, validateTrialReply),
+    recover: (id, proof) => this.data({ path: `/v1/trials/obsidian/operations/${encodeURIComponent(id)}`,
+      ...("token" in proof ? { accessToken: proof.token, installationId: this.identity.installationId }
+        : { trialCredential: proof.credential }) }, validateTrialReply)
+  };
+
+  private transcriptRequest(identity: TranscriptIdentity) {
+    return {
+      root: `/v1/plugins/transcripts/obsidian/${identity.scope}`,
+      proof: {
+        ...(identity.token ? { accessToken: identity.token, installationId: this.identity.installationId } : {}),
+        ...(identity.scope === "trial" ? { trialCredential: identity.credential } : {})
+      }
+    };
+  }
+
+  readonly transcript: TranscriptApi = {
+    start: (identity, key, sourceUrl) => {
+      const { root, proof } = this.transcriptRequest(identity);
+      return this.data({
+        path: root, method: "POST", ...proof, idempotencyKey: key,
+        body: { sourceUrl, confirmedUnits: identity.scope === "account" ? ACCOUNT_TRANSCRIPT_CREDITS : 1 }
+      }, value => validateTranscriptReceipt(value, identity.scope));
+    },
+    latest: identity => {
+      const { root, proof } = this.transcriptRequest(identity);
+      return this.data({ path: `${root}/latest`, ...proof },
+        value => value == null ? null : validateTranscriptReceipt(value, identity.scope));
+    },
+    recover: (identity, key) => {
+      const { root, proof } = this.transcriptRequest(identity);
+      return this.data({ path: `${root}/${encodeURIComponent(key)}/recover`, method: "POST", ...proof }, value => {
+        const receipt = validateTranscriptReceipt(value, identity.scope);
+        if (receipt.requestKey !== key) throw new Error("The transcript task changed.");
+        return receipt;
+      });
+    }
+  };
 
   restoreHistory(accessToken: string, fetchId: string): Promise<FetchPage> {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(fetchId)) throw new Error("Enter the original list request ID.");
@@ -1045,6 +1129,104 @@ function validateSession(value: unknown, now: number, installationId: string) {
     refreshToken: requireString(record.refreshToken, "refreshToken"),
     expiresIn: secondsUntil(record.accessTokenExpiresAt, now)
   };
+}
+
+function validateTrialBalance(value: unknown): TrialBalance {
+  const data = requireRecord(value);
+  const values = ["remaining", "reserved", "settled"].map(field => requireNonNegativeNumber(data[field], `trial.${field}`));
+  if (values.some(units => !Number.isSafeInteger(units)) || values.reduce((sum, units) => sum + units, 0) !== 3) {
+    throw new Error("trial balance is invalid");
+  }
+  const [remaining, reserved, settled] = values as [number, number, number];
+  return { remaining, reserved, settled, accountLinked: requireBoolean(data.accountLinked, "trial.accountLinked") };
+}
+
+function validateTrialExperience(value: unknown): TrialExperience {
+  const data = requireRecord(value);
+  const mode = data.variant;
+  if (!(mode === "A" && data.mode === "curated_demo" || mode === "B" && data.mode === "real_trial")) {
+    throw new Error("trial mode is invalid");
+  }
+  return { enrollmentId: requireString(data.enrollmentId, "trial.enrollmentId"), mode,
+    trial: mode === "B" ? validateTrialBalance(data.trial) : null };
+}
+
+function validateTrialReply(value: unknown): TrialReply {
+  const data = requireRecord(value);
+  const operationId = requireString(data.operationId, "trial.operationId");
+  const status = data.status;
+  const balance = validateTrialBalance(data.balance);
+  if (status === "success" || status === "success_empty") {
+    const page = validateFetchPage(data.result);
+    if (page.fetchId !== operationId || page.usage.charged || page.usage.units !== 0
+        || (status === "success_empty" && page.content.length)) throw new Error("trial result does not match the original operation");
+    return { operationId, status, balance, page: { ...page, trial: { outcome: status } } };
+  }
+  if (status !== "processing" && status !== "unknown" && status !== "delivery_pending" && status !== "failed") {
+    throw new Error("trial status is invalid");
+  }
+  return { operationId, status, balance, ...(typeof data.errorCode === "string" ? { errorCode: data.errorCode } : {}) };
+}
+
+function validateTranscriptReceipt(value: unknown, scope: TranscriptIdentity["scope"]): TranscriptReceipt {
+  const data = requireRecord(value);
+  const operationId = requireString(data.operationId, "transcript.operationId");
+  const requestKey = requireString(data.requestKey, "transcript.requestKey");
+  const sourceUrl = requireString(data.sourceUrl, "transcript.sourceUrl");
+  const platform = data.platform;
+  const status = data.status;
+  if (!/^[a-f0-9-]{36}$/.test(operationId) || !/^[a-f0-9-]{36}$/.test(requestKey)
+      || (platform !== "youtube" && platform !== "bilibili")
+      || (status !== "processing" && status !== "complete" && status !== "unknown")) throw new Error("Invalid transcript operation");
+  const url = new URL(sourceUrl);
+  if (url.protocol !== "https:" || url.username || url.password || url.port || url.hash
+      || url.hostname !== (platform === "youtube" ? "www.youtube.com" : "www.bilibili.com")) throw new Error("Invalid transcript source");
+  const caption = validateTranscriptChild(data.caption, result => ({
+    title: requireString(result.title, "transcript.title"), tracks: validateCaptionTracks(result.tracks)
+  }));
+  const video = validateTranscriptChild(data.video, result => {
+    if (!Array.isArray(result.media) || !result.media.length) throw new Error("Transcript video is missing");
+    const media = result.media.map(item => normalizeMedia(requireRecord(item)));
+    if (media.some(item => item.kind !== "video")) throw new Error("Transcript media is not video");
+    return { title: optionalString(result.title), media };
+  });
+  const states = [caption.status, video.status];
+  const successes = states.filter(state => state === "ready" || state === "empty").length;
+  const expected = states.includes("processing") ? "processing" : states.includes("unknown") ? "unknown" : "complete";
+  const chargedCredits = requireNonNegativeNumber(data.chargedCredits, "transcript.chargedCredits");
+  const usedTrial = requireNonNegativeNumber(data.usedTrial, "transcript.usedTrial");
+  if (status !== expected || chargedCredits !== (scope === "account" ? successes : 0)
+      || usedTrial !== (scope === "trial" && successes > 0 ? 1 : 0)) throw new Error("Transcript billing confirmation is inconsistent");
+  return { operationId, requestKey, sourceUrl, platform, status, caption, video, chargedCredits, usedTrial,
+    balance: scope === "trial" ? validateTrialBalance(data.balance) : null };
+}
+
+function validateTranscriptChild<T>(value: unknown, result: (row: Record<string, unknown>) => T): TranscriptChild<T> {
+  const child = requireRecord(value);
+  const state = child.status;
+  if (state === "ready") return { status: state, result: result(requireRecord(child.result)) };
+  if (state !== "processing" && state !== "unknown" && state !== "empty" && state !== "failed") throw new Error("Invalid transcript outcome");
+  return { status: state, result: null };
+}
+
+function validateCaptionTracks(value: unknown): CaptionTrack[] {
+  if (!Array.isArray(value) || !value.length) throw new Error("Subtitle tracks are missing");
+  return value.map(raw => {
+    const track = requireRecord(raw);
+    if (!Array.isArray(track.lines) || !track.lines.length) throw new Error("Subtitle cues are missing");
+    return {
+      id: requireString(track.id, "subtitle.id"),
+      label: requireString(track.label, "subtitle.label"),
+      language: requireString(track.language, "subtitle.language"),
+      lines: track.lines.map(rawLine => {
+        const line = requireRecord(rawLine);
+        const from = requireNonNegativeNumber(line.from, "subtitle.from");
+        const to = requireNonNegativeNumber(line.to, "subtitle.to");
+        if (to <= from) throw new Error("Invalid subtitle timestamp");
+        return { from, to, text: requireString(line.text, "subtitle.text") };
+      })
+    };
+  });
 }
 
 function validateFetchPage(value: unknown): FetchPage {

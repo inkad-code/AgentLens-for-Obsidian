@@ -31,6 +31,8 @@ export function AutoFetchPane({
   onStartFree,
   service,
   signedIn,
+  fetchBlocked = false,
+  onManagePlan,
   capabilities,
   capabilitiesError = false,
   defaults,
@@ -44,6 +46,8 @@ export function AutoFetchPane({
   onOpenFolder?: ((path: string) => void) | undefined;
   service?: AutoFetchWorkbenchPort | undefined;
   signedIn: boolean;
+  fetchBlocked?: boolean;
+  onManagePlan?: (() => void) | undefined;
   onRequestSignUp?: (()=>void) | undefined;
   onStartFree?: (()=>void) | undefined;
   capabilities: AccountCapabilities | null;
@@ -53,6 +57,7 @@ export function AutoFetchPane({
   onAccountChanged?: (() => void) | undefined;
 }) {
   const { t } = useI18n();
+  const parsingBlocked = signedIn && fetchBlocked;
   const pendingConfiguration = usePendingFollowConfiguration(service, capabilities?.accountId);
   const viewGeneration = useRef(0);
   const creatorChanges = useRef(0);
@@ -237,10 +242,16 @@ export function AutoFetchPane({
     if (isCurrentView()) setHomeTimezoneConfirmed(true);
   }
 
+  function managePlan() {
+    setAdding(false);
+    onManagePlan?.();
+  }
+
   async function parseProfile(event: SyntheticEvent) {
     const isCurrentView = captureView();
 
     event.preventDefault();
+    if (parsingBlocked) { managePlan(); return; }
     if (!service) return;
     const revision = profileDraftRevision.current;
     const requestedUrl = profileUrl.trim();
@@ -519,7 +530,8 @@ export function AutoFetchPane({
           {setupStep === 0 && <form className="agentlens-follow-form agentlens-setup-url" onSubmit={(event) => void parseProfile(event)}>
             <label htmlFor="agentlens-auto-url">Creator profile URL</label><div className="agentlens-url-bar"><input ref={profileInputRef} id="agentlens-auto-url" readOnly={Boolean(editing)} aria-label="Creator profile URL" placeholder="Paste a creator profile URL…" type="url" value={profileUrl} onChange={(event) => { profileDraftRevision.current += 1; setProfileUrl(event.currentTarget.value); setParsed(null); setError(null); setBusy(false); }} />
             {!editing && profileUrl && <button type="button" className="agentlens-clear-input" aria-label="Clear creator profile URL" onClick={clearProfileUrl}>×</button>}
-            <button type="submit" className="mod-cta" disabled={Boolean(editing) || busy || !profileUrl.trim() || !operationAvailable(capabilities, "autoFetch", service?.clientVersion())} aria-label="Parse creator">Parse</button></div>
+            {parsingBlocked ? <button type="button" className="mod-cta agentlens-parse-manage-plan" disabled={busy} onClick={managePlan}>{t("entitlement.manage")}</button>
+              : <button type="submit" className="mod-cta" disabled={Boolean(editing) || busy || !profileUrl.trim() || !operationAvailable(capabilities, "autoFetch", service?.clientVersion())} aria-label="Parse creator">Parse</button>}</div>
           </form>}
           {setupCreator && <section className="agentlens-follow-confirm">
             <div hidden={setupStep !== 0} className="agentlens-parsed-creator">

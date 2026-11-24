@@ -9,6 +9,7 @@ export interface TransportRequest {
   requestId?: string | undefined;
   idempotencyKey?: string | undefined;
   installationId?: string | undefined;
+  trialCredential?: string | undefined;
 }
 
 export interface JsonTransport {
@@ -61,6 +62,7 @@ export class ObsidianRequestUrlTransport {
     if (request.accessToken) headers.Authorization = `Bearer ${request.accessToken}`;
     if (request.idempotencyKey) headers["Idempotency-Key"] = request.idempotencyKey;
     if (request.installationId) headers["X-AgentLens-Installation-Id"] = request.installationId;
+    if (request.trialCredential) headers["X-AgentLens-Trial-Token"] = request.trialCredential;
 
     let response: RequestUrlResponse;
     try {

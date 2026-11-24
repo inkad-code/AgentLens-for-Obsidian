@@ -2,7 +2,7 @@ import type { DeviceAuthorization, DevicePollResult } from "../api/contracts";
 import { RequestCoordinator } from "../runtime/RequestCoordinator";
 import { AgentLensError } from "../core/errors";
 
-export interface EmailCredentials { email: string; password: string; name?: string; turnstileToken?: string; }
+export interface EmailCredentials { email: string; password: string; name?: string; turnstileToken?: string; registrationPollToken?: string; }
 export type DeviceAuthorizationIntent = "sign_in" | "sign_up";
 export const OBSIDIAN_PLUGIN_CLIENT_TYPE = "obsidian_plugin";
 
@@ -127,7 +127,7 @@ export class AuthService {
             if (!this.verifyHuman) throw new Error("Human verification is unavailable in this host.");
             const verification = new AbortController();
             this.verification = verification;
-            try { submitted = {...credentials, turnstileToken: await this.verifyHuman(verification.signal)}; }
+            try { submitted = {...credentials, registrationPollToken: await this.verifyHuman(verification.signal)}; }
             finally { if (this.verification === verification) this.verification = undefined; }
             if (generation !== this.generation) return this.state;
           }

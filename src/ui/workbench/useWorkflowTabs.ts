@@ -1,16 +1,18 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
 import type { WorkbenchTab } from "./types";
+import { SINGLE_FETCH_REVIEW } from "../../core/releaseProfile";
 
 export const WORKBENCH_TABS: ReadonlyArray<{ id: WorkbenchTab; label: string }> = [
   { id: "single", label: "Single Fetch" },
   { id: "bulk", label: "Bulk Fetch" },
+  ...(!SINGLE_FETCH_REVIEW ? [{ id: "transcript" as const, label: "Transcript" }] : []),
   { id: "auto", label: "Auto-Fetch" }
 ];
 
 export function useWorkflowTabs(initialTab: WorkbenchTab, onDirtyStateChange?: (dirty: boolean) => void) {
   const [activeTab, setActiveTab] = useState<WorkbenchTab>(initialTab);
-  const [drafts, setDrafts] = useState<Record<WorkbenchTab, boolean>>({ single: false, bulk: false, auto: false });
-  const [resetVersions] = useState<Record<WorkbenchTab, number>>({ single: 0, bulk: 0, auto: 0 });
+  const [drafts, setDrafts] = useState<Record<WorkbenchTab, boolean>>({ single: false, bulk: false, transcript: false, auto: false });
+  const [resetVersions] = useState<Record<WorkbenchTab, number>>({ single: 0, bulk: 0, transcript: 0, auto: 0 });
 
   useEffect(() => {
     onDirtyStateChange?.(Object.values(drafts).some(Boolean));

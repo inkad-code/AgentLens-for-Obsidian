@@ -1,10 +1,54 @@
 import { describe, expect, it } from "vitest";
 import { AgentLensApiClient } from "@/api/AgentLensApiClient";
-import { billingAction, validateDashboard, secureBillingUrl, type BillingDashboard } from "@/api/billing";
+import { AgentLensError } from "@/core/errors";
+import { billingAction, validateDashboard, validateLifecycleState, secureBillingUrl, type BillingDashboard } from "@/api/billing";
 import type { JsonTransport, TransportRequest } from "@/runtime/ObsidianRequestUrlTransport";
 
 const state: BillingDashboard = { plan: "pro", billingCycle: "monthly", subscriptionStatus: "active", scheduledPlan: null, scheduledBillingCycle: null, scheduledEffectiveAt: null, checkoutStatus: null, fetchReason: null };
 describe("deployed billing contract", () => {
+  it("validates future plan string fields without coercing objects or arrays", () => {
+    const future = {id:"future", state:"READY", plan:"PRO", mode:"AM", effectiveAt:"2027-01-01T00:00:00Z", kind:"ONE_OFF", currency:"USD", cancelAvailable:false};
+    const renewal = {plan:"PRO", mode:"AM", periodEnd:"2027-01-01T00:00:00Z", canceled:false, restoreAvailable:true};
+    expect(validateLifecycleState({stateVersion:1, future, renewal})).toMatchObject({future, renewal});
+    for (const kind of [["ONE_OFF"], {}, 12]) {
+      expect(() => validateLifecycleState({stateVersion:1, future:{...future, kind}})).toThrow("Invalid future plan kind.");
+    }
+    for (const currency of [["USD"], {}, 123, "usd"]) {
+      expect(() => validateLifecycleState({stateVersion:1, future:{...future, currency}})).toThrow("Invalid future currency.");
+    }
+  });
+  it("uses dedicated lifecycle state, restoration and future cancellation endpoints", async () => {
+    const requests: TransportRequest[] = [];
+    const responses = [{stateVersion:5,future:null,renewal:null},{status:"COMPLETED"},{status:"CANCELED"}];
+    const transport: JsonTransport = {json:async(request,validate)=>{requests.push(request);return validate(responses.shift());}};
+    const api = new AgentLensApiClient(transport,{installationId:"i",deviceId:"d",clientVersion:"1",obsidianVersion:"1",platform:"desktop_windows"}).billing("token");
+    expect(await api.lifecycleState!()).toEqual({stateVersion:5,future:null,renewal:null});
+    const consent = {stateVersion:5,requestKey:"restore-original",futureId:"future-1",confirmed:true as const};
+    await api.lifecycleRestoreRenewal!(consent);
+    await api.lifecycleCancelFuture!("future/1",5);
+    expect(requests).toEqual([
+      {path:"/billing/lifecycle/state",accessToken:"token"},
+      {path:"/billing/lifecycle/renewal/restore",method:"POST",accessToken:"token",body:consent},
+      {path:"/billing/lifecycle/futures/future%2F1/cancel",method:"POST",accessToken:"token",body:{stateVersion:5,confirmed:true}},
+    ]);
+  });
+  it.each([
+    [404, "LIFECYCLE_NOT_ENABLED", true],
+    [404, undefined, false],
+    [404, "OTHER_NOT_FOUND", false],
+    [503, "LIFECYCLE_NOT_ENABLED", false],
+  ] as const)("only falls back for explicit non-enrollment (%s, %s)", async (status, code, fallback) => {
+    const failure = new AgentLensError("unknown", "Billing actions unavailable", false, status, undefined, undefined, undefined, code);
+    const transport: JsonTransport = {json: async () => { throw failure; }};
+    const api = new AgentLensApiClient(transport, {installationId:"i",deviceId:"d",clientVersion:"1",obsidianVersion:"1",platform:"desktop_windows"}).billing("token");
+    if (fallback) await expect(api.lifecycleActions!()).resolves.toBeNull();
+    else await expect(api.lifecycleActions!()).rejects.toBe(failure);
+  });
+
+  it("retains distinct service and credit dates from the dashboard", () => {
+    const dates = {subscriptionTermEndsAt:"2027-11-03T00:00:00Z",monthlyCreditPeriodEndsAt:"2026-12-03T00:00:00Z",quotaRefreshAt:"2026-12-03T00:00:00Z"};
+    expect(validateDashboard({...state,...dates})).toMatchObject(dates);
+  });
   it("authenticates wallet availability and forwards the chosen payment method", async () => {
     const requests: TransportRequest[]=[];
     const responses: unknown[]=[{walletAvailable:true},{checkoutUrl:"https://checkout.stripe.com/wallet",status:"pending"},{checkoutUrl:"https://checkout.stripe.com/card",status:"pending"}];

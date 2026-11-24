@@ -22,10 +22,19 @@ it("offers Google or email after saving and closes without starting authenticati
 it("validates email sign-in inline and submits the existing credentials contract", async () => {
   const props = setup();
   fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
-  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  const terms = screen.getByRole("checkbox");
+  expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+  expect(screen.getByRole("link", { name: "Terms of Service" })).toHaveAttribute("href", "https://agentlensapi.io/terms");
+  expect(screen.getByRole("link", { name: "Privacy Policy" })).toHaveAttribute("href", "https://agentlensapi.io/privacy");
+  fireEvent.submit(terms.closest("form")!);
   expect(screen.getByRole("alert")).toHaveTextContent("Enter your email address first.");
   fireEvent.change(screen.getByLabelText(/^Email/), { target: { value: "reader@example.com" } });
   fireEvent.change(screen.getByLabelText(/^Password/), { target: { value: "Test20@6" } });
+  fireEvent.submit(terms.closest("form")!);
+  expect(props.onSubmit).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert")).toHaveTextContent("Please agree to the Terms of Service and Privacy Policy.");
+  expect(terms).toHaveFocus();
+  fireEvent.click(terms);
   fireEvent.click(screen.getByRole("button", { name: "Continue" }));
   await waitFor(() => expect(props.onSubmit).toHaveBeenCalledWith({ email: "reader@example.com", password: "Test20@6" }));
   await waitFor(() => expect(screen.getByLabelText(/^Password/)).toHaveValue(""));
@@ -71,6 +80,7 @@ it("shows email authentication errors without leaving the completion dialog", as
   fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
   fireEvent.change(screen.getByLabelText(/^Email/), { target: { value: "reader@example.com" } });
   fireEvent.change(screen.getByLabelText(/^Password/), { target: { value: "Test20@6" } });
+  fireEvent.click(screen.getByRole("checkbox"));
   fireEvent.click(screen.getByRole("button", { name: "Continue" }));
   expect(await screen.findByRole("alert")).toBeVisible();
   expect(screen.getByRole("dialog")).toBeVisible();

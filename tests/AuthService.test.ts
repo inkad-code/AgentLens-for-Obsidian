@@ -137,7 +137,7 @@ describe("AuthService", () => {
     const tokens=persistence();const verifyHuman=vi.fn(async()=>"fresh-challenge");
     const service=new AuthService(authApi,tokens,Date.now,verifyHuman);
     await service.startWithEmail({email:"new@example.com",password:"Example123!",name:"New"});
-    expect(authApi.authenticateEmail).toHaveBeenCalledWith({email:"new@example.com",password:"Example123!",name:"New",turnstileToken:"fresh-challenge"});
+    expect(authApi.authenticateEmail).toHaveBeenCalledWith({email:"new@example.com",password:"Example123!",name:"New",registrationPollToken:"fresh-challenge"});
     expect(authApi.approveDevice).toHaveBeenCalledWith("web","ABCD-EFGH");
     expect(tokens.value).toBeNull();
   });

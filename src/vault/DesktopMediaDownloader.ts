@@ -95,6 +95,9 @@ export class DesktopMediaDownloader {
         controller.signal.throwIfAborted();
         if (!received || total !== undefined && received !== total) throw new Error("Media download is empty or incomplete.");
         await file.sync();
+      } catch (error) {
+        if (response.errored === error) throw MediaDownloadError.network("The media download connection was interrupted.");
+        throw error;
       } finally { response.destroy(); await file.close(); }
       const ownedDirectory = directory;
       return { kind: "file", path: destination, sizeBytes: received, sha256: hash.digest("hex"),
@@ -105,7 +108,7 @@ export class DesktopMediaDownloader {
         await fs.rm(directory, { recursive: true, force: true }).catch(() => undefined);
       }
       if (signal?.aborted) throw new DOMException("Media download canceled.", "AbortError");
-      if (controller.signal.aborted) throw new Error("Media download timed out.");
+      if (controller.signal.aborted) throw MediaDownloadError.network("Media download timed out.");
       throw error;
     } finally { timers.clearTimeout(timeout); signal?.removeEventListener("abort", abort);  }
   }
@@ -146,7 +149,7 @@ async function openMedia(rawUrl: string, suppliedHeaders: Readonly<Record<string
       resolve(response);
     });
     request.setTimeout(idleMs, () => request.destroy(new Error("Media download stalled.")));
-    request.on("error", error => { agent?.destroy(); reject(error); });
+    request.on("error", () => { agent?.destroy(); reject(MediaDownloadError.network()); });
   });
   if ([301,302,303,307,308].includes(response.statusCode ?? 0)) {
     response.destroy();

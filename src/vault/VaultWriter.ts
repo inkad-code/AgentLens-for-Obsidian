@@ -71,7 +71,7 @@ export interface VaultWriteResult {
   manifest: NoteWriteManifest;
   file: VaultFileRef;
   ledger: PersistedLedgerEntry;
-  attachments: ReadonlyArray<{ mediaId: string; path: string; status: "saved" | "skipped" | "linked" | "failed"; failureKind?: MediaFailureKind; deferred?: boolean; error?: string | undefined }>;
+  attachments: ReadonlyArray<{ mediaId: string; path: string; status: "saved" | "skipped" | "linked" | "failed"; failureKind?: MediaFailureKind; downloadFailureReason?: MediaDownloadError["reason"]; deferred?: boolean; error?: string | undefined }>;
 }
 
 type AttachmentWriteResult = VaultWriteResult["attachments"][number];
@@ -452,7 +452,7 @@ export class VaultWriter {
         assertCurrent?.();
         await record({ mediaId: attachment.mediaId, path: attachment.path, status: "failed", failureKind: error instanceof MediaDownloadError ? error.kind : "retryable",
           ...(error instanceof MediaDownloadError && error.deferred ? { deferred: true } : {}),
-
+          ...(error instanceof MediaDownloadError && error.reason ? { downloadFailureReason: error.reason } : {}),
           error: error instanceof Error ? error.message : "The attachment could not be saved." });
       }
       }, signal, { sizeBytes: mediaSize?.(attachment.mediaId), buffered: bufferedDownloads, waitForSlot: waitForTransferSlot }).catch(async error => {

@@ -21,6 +21,7 @@ import type { TemplateId, WorkbenchDefaults } from "./types";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { PlatformIcon, RemoteThumbnail, message, operationAvailable } from "./shared";
 import { WorkflowOnboarding } from "./WorkflowOnboarding";
+import { useI18n } from "../../i18n/I18nProvider";
 
 export function SingleFetchPane({
   onDemoSaved,
@@ -29,6 +30,10 @@ export function SingleFetchPane({
   initialUrl,
   service,
   signedIn,
+  trial,
+  onTrialChanged,
+  fetchBlocked = false,
+  onManagePlan,
   capabilities,
   onOpenNote,
   defaults,
@@ -40,6 +45,10 @@ export function SingleFetchPane({
   initialUrl?: string | undefined;
   service?: SingleWorkbenchPort | undefined;
   signedIn: boolean;
+  trial?: import("../../workbench/ManualTrial").TrialUi | undefined;
+  onTrialChanged?: (() => void) | undefined;
+  fetchBlocked?: boolean;
+  onManagePlan?: (() => void) | undefined;
   onDemoSaved?: (()=>void) | undefined;
   onRequestSignUp?: (()=>void) | undefined;
   onStartFree?: (()=>void) | undefined;
@@ -51,7 +60,10 @@ export function SingleFetchPane({
   onSaveViewChange?: ((open: boolean) => void) | undefined;
   onPreviewChange?: ((populated: boolean) => void) | undefined;
 }) {
-  const [url, setUrl] = useState(signedIn ? initialUrl ?? "" : DEMO_URL);
+  const { t } = useI18n();
+  const parsingBlocked = signedIn && fetchBlocked;
+  const editable = signedIn || trial?.mode === "B" && !trial.balance?.accountLinked;
+  const [url, setUrl] = useState(editable ? initialUrl ?? "" : DEMO_URL);
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [manifest, setManifest] = useState<NoteWriteManifest | null>(null);
   const [saved, setSaved] = useState<SaveResult | null>(null);
@@ -100,7 +112,7 @@ export function SingleFetchPane({
     writeRevision.current += 1;
     setBusy(false);
     setCancelling(false);
-    setUrl(signedIn ? initialUrl ?? "" : DEMO_URL);
+    setUrl(editable ? initialUrl ?? "" : DEMO_URL);
     setFetchFailure(null);
     setSaveViewOpen(false);
     setSaving(false);
@@ -108,7 +120,7 @@ export function SingleFetchPane({
     setPreview(null);
     setManifest(null);
     setSaved(null);
-  }, [signedIn, initialUrl]);
+  }, [signedIn, editable, initialUrl]);
 
   useEffect(() => {
     if (!service || !preview) return undefined;
@@ -126,6 +138,7 @@ export function SingleFetchPane({
 
   async function fetchPreview(event: SyntheticEvent) {
     event.preventDefault();
+    if (parsingBlocked) { onManagePlan?.(); return; }
     if (!service || retryBlocked) return;
     const revision = sourceRevision.current;
     writeRevision.current += 1;
@@ -147,6 +160,27 @@ export function SingleFetchPane({
       }
     } finally {
       if (signedIn) onAccountChanged?.();
+      onTrialChanged?.();
+      if (revision === sourceRevision.current) setBusy(false);
+    }
+  }
+
+  async function recoverTrial() {
+    if (!service?.recoverTrialSingle || busy) return;
+    const revision = sourceRevision.current;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await service.recoverTrialSingle();
+      if (revision !== sourceRevision.current) return;
+      setUrl(result.url);
+      setPreview(result.preview);
+      setManifest(null);
+      setSaved(null);
+    } catch (caught) {
+      if (revision === sourceRevision.current) setError(message(caught));
+    } finally {
+      onTrialChanged?.();
       if (revision === sourceRevision.current) setBusy(false);
     }
   }
@@ -177,7 +211,11 @@ export function SingleFetchPane({
       if (!success) throw new Error("Vault write did not return a result.");
       setSaved(success);
       setManifest(success.write.manifest);
-      if (!signedIn) (onDemoSaved ?? onRequestSignUp)?.();
+      if (!signedIn) {
+        const firstTrialSave = preview.trial && success.write.ledger.physicalStatus === "active"
+          && await service.claimTrialSavePrompt?.().catch(() => false);
+        if ((preview.demo || firstTrialSave) && revision === writeRevision.current) (onDemoSaved ?? onRequestSignUp)?.();
+      }
     } catch (caught) {
       if (revision === writeRevision.current && !controller.signal.aborted) setError(message(caught));
     } finally {
@@ -263,7 +301,7 @@ export function SingleFetchPane({
             autoComplete="off"
             spellCheck={false}
             placeholder="Paste a public post URL…"
-            value={signedIn ? url : SINGLE_DEMO_LINK}
+            value={editable ? url : SINGLE_DEMO_LINK}
             onChange={(event) => {
               sourceRevision.current += 1;
               writeRevision.current += 1;
@@ -276,18 +314,20 @@ export function SingleFetchPane({
               setFetchFailure(null);
               setBusy(false);
             }}
-            onPaste={event=>{if(!signedIn){event.preventDefault();onRequestSignUp?.();}}}
-            onKeyDown={event=>{if(!signedIn && event.key.length===1 && !event.metaKey && !event.ctrlKey && !event.altKey){event.preventDefault();onRequestSignUp?.();}}}
-            readOnly={!signedIn || saving}
+            onPaste={event=>{if(!editable){event.preventDefault();onRequestSignUp?.();}}}
+            onKeyDown={event=>{if(!editable && event.key.length===1 && !event.metaKey && !event.ctrlKey && !event.altKey){event.preventDefault();onRequestSignUp?.();}}}
+            readOnly={!editable || saving}
           />
-          {signedIn && url && <button type="button" className="agentlens-clear-input" aria-label="Clear URL" disabled={cancelling} onClick={clearUrl}>×</button>}
-          <button type="submit" className="mod-cta" disabled={busy || retryBlocked || !service || !targetUrl || signedIn && !operationAvailable(capabilities, "single", service.clientVersion())} aria-label={signedIn ? "Fetch preview" : "Fetch demo"} aria-busy={busy}>{saving ? "Saving…" : busy ? "Parsing…" : signedIn ? "Parse" : "Try this link"}</button>
+          {editable && url && <button type="button" className="agentlens-clear-input" aria-label="Clear URL" disabled={cancelling} onClick={clearUrl}>×</button>}
+          {parsingBlocked ? <button type="button" className="mod-cta agentlens-parse-manage-plan" disabled={busy} onClick={onManagePlan}>{t("entitlement.manage")}</button>
+            : <button type="submit" className="mod-cta" disabled={busy || retryBlocked || !service || !targetUrl || signedIn && !operationAvailable(capabilities, "single", service.clientVersion())} aria-label={editable ? "Fetch preview" : "Fetch demo"} aria-busy={busy}>{saving ? "Saving…" : busy ? "Parsing…" : editable ? "Parse" : "Try this link"}</button>}
           </div>
           {busy && !saving && <p className="agentlens-parse-status" role="status">Fetching your post… This can take a moment.</p>}
           {error && <p className="agentlens-inline-error" role="alert">{error}</p>}
+          {trial?.recoverSingle && service?.recoverTrialSingle && <button type="button" disabled={busy || saving} onClick={() => void recoverTrial()}>Open previous trial result</button>}
         </form>
 
-        {!signedIn && !preview ? <WorkflowOnboarding variant="single" onRequestSignUp={onStartFree ?? onRequestSignUp} /> : <section className={`agentlens-preview-card${populated ? " is-populated" : " is-empty"}`}>
+        {!editable && !preview ? <WorkflowOnboarding variant="single" onRequestSignUp={onStartFree ?? onRequestSignUp} /> : <section className={`agentlens-preview-card${populated ? " is-populated" : " is-empty"}`}>
           {preview && manifest ? (
             <>
               <div className="agentlens-post-summary">

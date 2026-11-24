@@ -37,6 +37,7 @@ import type { PluginUiPreferences } from "../runtime/PluginStateStore";
 import type { BillingPort } from "../api/billing";
 
 export interface AgentLensApiPort {
+  transcript?: import("../api/transcript").TranscriptApi;
   reportDestinationFailure?(token: string, input: {creatorId: string; operationId: string; trigger: string; plan?: import("../api/scheduleHistory").OperationPlan}): Promise<unknown>;
   sharedSettings?(token: string): Promise<import("../api/shared-settings").SharedSettings[]>;
   adoptSharedFolder?(token: string, input: {followId: string; targetId: string; pathRevision: number; folderId: string}): Promise<unknown>;
@@ -119,6 +120,8 @@ export interface ActivityWorkbenchPort {
 }
 
 export interface SingleWorkbenchPort {
+  recoverTrialSingle?(): Promise<{ url: string; preview: PreviewResult }>;
+  claimTrialSavePrompt?(): Promise<boolean>;
   clientVersion(): string;
   previewSingle(url: string): Promise<PreviewResult>;
   planPreview(preview: PreviewResult, options?: WriteOptions): Promise<NoteWriteManifest>;
@@ -126,6 +129,8 @@ export interface SingleWorkbenchPort {
 }
 
 export interface BulkWorkbenchPort {
+  recoverTrialProfile?(): Promise<{ url: string; page: FetchPage; pages: readonly FetchPage[] }>;
+  claimTrialSavePrompt?(): Promise<boolean>;
   restoreHistory?(fetchId: string): Promise<FetchPage>;
   supplementContent?(preview: PreviewResult): Promise<PreviewResult>;
   previewSingle(url: string): Promise<PreviewResult>;
@@ -174,4 +179,11 @@ export interface AgentLensWorkbenchPort
     ActivityWorkbenchPort,
     SingleWorkbenchPort,
     BulkWorkbenchPort,
-    AutoFetchWorkbenchPort {}
+    AutoFetchWorkbenchPort {
+  trialStatus?(): Promise<import("./ManualTrial").TrialUi | undefined>;
+  startTrial?(): Promise<import("./ManualTrial").TrialUi>;
+  linkTrial?(): Promise<void>;
+  startTranscript?(sourceUrl: string, key: string, scope: import("../api/transcript").TranscriptScope): Promise<import("../api/transcript").TranscriptReceipt>;
+  latestTranscript?(scope: import("../api/transcript").TranscriptScope): Promise<import("../api/transcript").TranscriptReceipt | null>;
+  recoverTranscript?(scope: import("../api/transcript").TranscriptScope, key: string): Promise<import("../api/transcript").TranscriptReceipt>;
+}

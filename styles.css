@@ -1164,9 +1164,11 @@
 .agentlens-account-summary { gap: 8px; align-items: center; font-size: 12px; min-width: 0; }
 .agentlens-account-summary button { padding: 4px 8px; font-size: 12px; border: 0; background: transparent; }
 .agentlens-account-summary button.mod-cta { padding-inline: 14px; min-height: 28px; }
-.agentlens-account-summary .agentlens-account-trigger { display: block; min-width: 0; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agentlens-account-summary.has-account { gap: 16px; }
+.agentlens-account-summary .agentlens-account-trigger { display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 6px; min-width: 0; max-width: 180px; height: auto; padding: 0; line-height: 12px; text-align: right; }
+.agentlens-account-trigger > :is(strong, span) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agentlens-account-trigger strong { font-weight: 300; color: var(--agentlens-color-header-name); }
-.agentlens-account-trigger span { color: var(--text-faint); font-weight: 300; }
+.agentlens-account-trigger span { color: var(--text-faint); font-weight: 300; text-transform: capitalize; }
 .agentlens-account-summary button.agentlens-close { padding: 0; min-height: 24px; flex: 0 0 24px; }
 .agentlens-close img { display: block; }
 .agentlens-account-details {
@@ -1721,6 +1723,7 @@
   --agentlens-color-notice-surface: #fff2d8;
   --agentlens-color-notice-border: #f3e4c6;
   --agentlens-color-notice-text: #c58709;
+  --agentlens-color-notice-action: #eabf67;
 }
 .agentlens-creator-dialog.step-0 .agentlens-setup-content { padding-top: 14px; }
 .agentlens-creator-dialog.step-0 .agentlens-setup-url { padding: 0; gap: 6px; border: 0; margin: 0; }
@@ -1829,6 +1832,7 @@
 .agentlens-bulk-post-copy img { width: 12px; height: 12px; }
 .agentlens-workbench .agentlens-bulk-post > button { color: var(--interactive-accent); border: 0; background: transparent; padding: 4px 0 4px 8px; font-size: 13px; }
 .agentlens-fetch-more { display: flex; justify-content: center; margin-top: -4px; }
+.agentlens-bulk-loaded { margin: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px; line-height: 20px; }
 .agentlens-workbench .agentlens-fetch-more > button { min-width: 132px; min-height: 36px; padding: 5px 14px; font-size: 14px; font-weight: 600; white-space: nowrap; }
 .agentlens-workbench .agentlens-fetch-more > button:where(:not(:disabled)) { color: var(--agentlens-color-action-label-active); border-color: var(--agentlens-color-action-label-active); }
 .agentlens-bulk-footer { margin-top: 0; }
@@ -2575,17 +2579,13 @@ body.agentlens-frameless .agentlens-workbench__header :is(button, a, input, sele
   --agentlens-color-pricing-discount: #dfeaff;
   --agentlens-color-pricing-basic: #fbfaf9;
   --agentlens-color-pricing-selected: #2563eb;
-  --agentlens-color-pricing-current: #ececec;
-  --agentlens-color-pricing-current-text: #aaa5b0;
   --agentlens-color-pricing-muted: #65758b;
   --agentlens-color-pricing-check: #2463eb;
-  --agentlens-color-pricing-summary: #64748b;
-  --agentlens-color-pricing-summary-text: #0f172a;
   --agentlens-color-pricing-action: #1769ff;
   --agentlens-color-pricing-action-text: #f3f6f9;
 }
 
-.agentlens-pricing-page { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; background: linear-gradient(180deg, var(--agentlens-color-pricing-canvas), var(--agentlens-color-pricing-soft)); color: var(--agentlens-color-pricing-text); }
+.agentlens-pricing-page { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; background: linear-gradient(180deg, var(--agentlens-color-pricing-canvas), var(--agentlens-color-pricing-soft)); color: var(--agentlens-color-pricing-text); --no-tooltip: true; }
 .agentlens-workbench .agentlens-pricing-back { display: flex; align-items: center; justify-content: flex-start; text-align: left; gap: 12px; width: 100%; height: 56px; min-height: 56px; padding: 0 16px; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--agentlens-color-pricing-back); font-size: 17px; font-weight: 500; }
 .agentlens-pricing-content { display: flex; flex-direction: column; align-items: center; gap: 24px; width: 100%; flex: 1 1 auto; min-height: 0; overflow-y: auto; max-width: 680px; margin: 0 auto; padding: 12px 28px 24px; }
 .agentlens-pricing-cycle { display: flex; align-items: center; width: 223px; height: 40px; padding: 3px; border: 1px solid var(--agentlens-color-pricing-border); border-radius: 999px; background: var(--agentlens-color-pricing-cycle); }
@@ -2605,7 +2605,6 @@ body.agentlens-frameless .agentlens-workbench__header :is(button, a, input, sele
 .agentlens-workbench .agentlens-pricing-card:hover, .agentlens-workbench .agentlens-pricing-card:active { transform: none; box-shadow: none; }
 .agentlens-pricing-heading { display: flex; flex-direction: column; gap: 8px; }
 .agentlens-pricing-title { display: flex; align-items: center; gap: 8px; font-size: 20px; font-weight: 700; line-height: 27px; white-space: nowrap; }
-.agentlens-pricing-current { padding: 4px 10px; border-radius: 999px; background: var(--agentlens-color-pricing-current); color: var(--agentlens-color-pricing-current-text); font-size: 11px; line-height: 15px; }
 .agentlens-pricing-description { color: var(--agentlens-color-pricing-muted); font-size: 12px; line-height: 16px; }
 .agentlens-pricing-price { display: flex; align-items: center; gap: 4px; min-height: 38px; }
 .agentlens-pricing-price strong { font-size: 28px; line-height: 38px; font-weight: 700; }
@@ -2623,21 +2622,16 @@ body.agentlens-frameless .agentlens-workbench__header :is(button, a, input, sele
 .agentlens-workbench .agentlens-pricing-addon-select { display: flex; flex-direction: column; gap: 16px; align-items: stretch; min-height: 0; height: auto; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: inherit; text-align: left; }
 .agentlens-pricing-pack { display: flex; flex-direction: column; gap: 4px; }
 .agentlens-workbench .agentlens-pricing-pack select { width: 100%; height: 40px; padding: 0 26px 0 12px; border: 1px solid var(--agentlens-color-pricing-border); border-radius: 8px; appearance: none; background-color: white; color: var(--agentlens-color-pricing-text); box-shadow: none; font-family: inherit; font-size: 16px; font-weight: 700; }
-.agentlens-pricing-summary { align-self: stretch; margin-inline: 4px; min-height: 97px; }
-.agentlens-pricing-summary p { margin: 0; font-size: 14px; line-height: 22px; }
-.agentlens-pricing-summary p:first-child { margin-bottom: 8px; font-size: 16px; color: var(--agentlens-color-pricing-summary); }
-.agentlens-pricing-summary strong { color: var(--agentlens-color-pricing-summary-text); font-weight: 700; }
-.agentlens-pricing-summary p:last-child { display: flex; align-items: center; gap: 12px; margin-top: 13px; color: var(--agentlens-color-pricing-muted); font-size: 12px; line-height: 16px; }
-.agentlens-pricing-summary img { flex: 0 0 14px; }
+.agentlens-pricing-summary { align-self: stretch; flex-shrink: 0; margin: 0; color: var(--agentlens-color-pricing-muted); font-size: 12px; line-height: 18px; }
 .agentlens-pricing-payments { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; width: min(554px, 100%); }
 .agentlens-pricing-payments.agentlens-pricing-continue { grid-template-columns: minmax(0, 1fr); width: 100%; align-self: center; margin: 12px auto 0; }
 .agentlens-pricing-payments.agentlens-pricing-continue.has-wallet { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
-.agentlens-payment-method-note { margin: 8px 0 0; font-size: 12px; line-height: 18px; color: var(--text-muted); text-align: center; }
 @container agentlens (max-width: 500px) {
   .agentlens-pricing-payments.agentlens-pricing-continue.has-wallet { grid-template-columns: minmax(0,1fr); gap: 12px; }
 }
 .agentlens-workbench .agentlens-pricing-payments.agentlens-pricing-continue button { min-height: 52px; height: 52px; font-size: 16px; }
-.agentlens-pricing-scheduled { width: 100%; font-size: 14px; line-height: 1.5; }
+.agentlens-pricing-scheduled { width: 100%; flex-shrink: 0; font-size: 14px; line-height: 1.5; }
+.agentlens-pricing-content > p { flex-shrink: 0; }
 .agentlens-pricing-selection { display: flex; flex-direction: column; align-items: center; gap: 24px; width: 100%; min-width: 0; margin: 0; padding: 0; border: 0; }
 .agentlens-workbench .agentlens-pricing-checkout-dialog { width: min(672px, calc(100vw - 32px)); height: auto; max-height: calc(100dvh - 32px); padding: 24px; border: 1px solid var(--agentlens-color-pricing-border); border-radius: 8px; background: white; color: var(--agentlens-color-pricing-text); box-sizing: border-box; overflow-y: auto; }
 .agentlens-pricing-checkout-dialog::backdrop { background: color-mix(in srgb, black 75%, transparent); }
@@ -3020,7 +3014,7 @@ body.agentlens-frameless .agentlens-workbench__header :is(button, a, input, sele
   .agentlens-workbench__header { gap: 6px; padding: 8px 12px; }
   .agentlens-brandline { gap: 4px; }
   .agentlens-brandline h1 { font-size: 12px; }
-  .agentlens-account-summary { gap: 4px; }
+  .agentlens-account-summary, .agentlens-account-summary.has-account { gap: 4px; }
   .agentlens-account-summary .agentlens-account-trigger { max-width: 112px; padding-inline: 0; font-size: 10px; }
 }
 @container agentlens (max-width: 500px) and (max-height: 520px) {
@@ -3045,16 +3039,26 @@ body.agentlens-frameless .agentlens-workbench__header :is(button, a, input, sele
 .agentlens-add-creator-empty { display: grid; place-items: center; flex: 1 0 auto; min-height: 198px; padding: 20px 0 40px; }
 .agentlens-add-creator-empty img { display: block; width: 132px; height: 138px; object-fit: fill; object-position: bottom; opacity: 0.46; pointer-events: none; }
 
-/* Keep checkout visible while the plan catalog scrolls independently. */
-.agentlens-pricing-page > .agentlens-pricing-back { flex: none; }
-.agentlens-pricing-footer { flex: none; width: 100%; max-width: 680px; margin: 0 auto; padding: 12px 28px 16px; border-top: 1px solid var(--agentlens-color-pricing-border); background: var(--agentlens-color-pricing-soft); --no-tooltip: true; }
-.agentlens-pricing-footer > .agentlens-parse-error { margin: 0 0 10px; overflow-wrap: anywhere; }
-.agentlens-pricing-footer-selection { margin: 0 0 10px; font-size: 13px; line-height: 18px; color: var(--agentlens-color-pricing-summary); }
-.agentlens-pricing-footer-selection strong { color: var(--agentlens-color-pricing-summary-text); }
+/* The catalog and payment actions share the pricing scroll area. */
+.agentlens-pricing-header { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; flex: none; min-height: 56px; }
+.agentlens-workbench .agentlens-pricing-header .agentlens-pricing-back { width: auto; justify-self: start; }
+.agentlens-pricing-footer { --agentlens-wallet-button-width: 200px; --agentlens-payment-column-gap: 24px; flex: none; width: 100%; --no-tooltip: true; }
+.agentlens-pricing-footer > .agentlens-parse-error { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 0 12px; padding: 6px 11px; color: var(--agentlens-color-status-warning); line-height: 14px; overflow-wrap: anywhere; }
+.agentlens-pricing-footer > .agentlens-parse-error span { min-width: 0; }
+.agentlens-workbench .agentlens-pricing-footer > .agentlens-parse-error button { min-width: 54px; min-height: 18px; height: auto; padding: 1px 12px; border: 0; border-radius: 999px; background: var(--agentlens-color-notice-action); box-shadow: none; color: white; font: inherit; line-height: 16px; }
+.agentlens-workbench .agentlens-pricing-footer > .agentlens-parse-error button:hover:not(:disabled) { text-decoration: underline; }
 .agentlens-pricing-footer .agentlens-pricing-continue { margin-top: 0; }
-.agentlens-pricing-footer .agentlens-payment-method-note,
-.agentlens-pricing-footer > p[role="status"] { margin: 8px 0 0; font-size: 11px; line-height: 16px; color: var(--text-muted); text-align: center; }
-@container agentlens (max-width: 620px) { .agentlens-pricing-footer { padding-inline: 20px; } }
+.agentlens-pricing-payment-terms { max-width: 539px; margin: 12px auto 0; color: var(--agentlens-color-pricing-muted); font-size: 12px; line-height: 16px; text-align: center; }
+.agentlens-pricing-payment-terms p { margin: 0; }
+.agentlens-pricing-payment-feedback { margin: 0 0 12px; color: var(--text-error); font-size: 12px; line-height: 16px; overflow-wrap: anywhere; }
+.agentlens-pricing-management { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 24px; margin-top: 8px; }
+.agentlens-workbench .agentlens-pricing-management button { min-height: 16px; height: auto; padding: 0; border: 0; background: transparent; box-shadow: none; color: var(--agentlens-color-pricing-muted); font-size: 12px; font-weight: 600; line-height: 16px; }
+.agentlens-workbench .agentlens-pricing-management button:is(:hover, :active):not(:disabled) { background: transparent; text-decoration: underline; }
+@container agentlens (max-width: 400px) {
+  .agentlens-pricing-header { grid-template-columns: auto minmax(0, 1fr); }
+  .agentlens-pricing-header .agentlens-pricing-cycle { justify-self: center; }
+  .agentlens-workbench .agentlens-pricing-header .agentlens-pricing-back { gap: 6px; padding-inline: 10px; }
+}
 
 /* Email and Google authorization retain their action styles while loading. */
 .agentlens-workbench.has-auth-operation .agentlens-account-summary > button[aria-label="Sign in / register"]:disabled { background: transparent; border-color: transparent; color: var(--text-faint); }
@@ -3067,19 +3071,24 @@ body.agentlens-frameless .agentlens-workbench__header :is(button, a, input, sele
 
 /* 1108 feedback: Eagle pricing states and controls, in the Obsidian light palette. */
 .agentlens-workbench .agentlens-pricing-card.is-current,
-.agentlens-workbench .agentlens-pricing-card.is-current:is(:hover, :active, :disabled) { background: white; border-color: var(--agentlens-color-pricing-border); padding-bottom: 24px; cursor: not-allowed; }
+.agentlens-workbench .agentlens-pricing-card.is-current:is(:hover, :active, :disabled) { background: var(--agentlens-color-pricing-basic); border-color: var(--agentlens-color-pricing-border); color: var(--agentlens-color-pricing-text); }
+.agentlens-workbench .agentlens-pricing-card.is-current { height: auto; padding-bottom: 18px; }
+.agentlens-workbench .agentlens-pricing-card.is-current:not(:disabled) { cursor: pointer; }
 .agentlens-workbench .agentlens-pricing-card.is-unavailable { border-color: var(--agentlens-color-pricing-border); box-shadow: none; }
 .agentlens-workbench .agentlens-pricing-card.is-unavailable :is(.agentlens-pricing-title, .agentlens-pricing-price strong, .agentlens-pricing-credits strong) { color: var(--agentlens-color-pricing-muted); }
-.agentlens-workbench .agentlens-pricing-card.is-selected:not(.is-current, .is-unavailable) { border-color: var(--agentlens-color-pricing-selected); box-shadow: inset 0 0 0 1px var(--agentlens-color-pricing-selected); }
+.agentlens-workbench .agentlens-pricing-card.is-selected:not(.is-unavailable) { border-color: var(--agentlens-color-pricing-selected); color: var(--agentlens-color-pricing-text); }
 .agentlens-workbench .agentlens-pricing-card:not(.is-selected, .is-current, .is-unavailable):hover { border-color: var(--agentlens-color-pricing-selected); }
-.agentlens-pricing-current { position: absolute; inset: auto -1px -1px; height: 16px; padding: 0; border-radius: 0 0 12px 12px; background: var(--agentlens-color-pricing-selected); color: white; font-size: 8px; line-height: 16px; text-align: center; text-transform: uppercase; }
+.agentlens-pricing-current { position: absolute; inset: auto -1px -1px; height: 16px; border-radius: 0 0 12px 12px; background: var(--agentlens-color-pricing-selected); color: white; font-size: 8px; line-height: 16px; text-align: center; text-transform: uppercase; }
 .agentlens-pricing-plan-status { color: var(--agentlens-color-pricing-selected); font-size: 11px; }
-.agentlens-workbench .agentlens-pricing-payments.agentlens-pricing-continue { display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; }
-.agentlens-workbench .agentlens-pricing-payments.agentlens-pricing-continue button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; flex: 0 1 160px; width: 160px; min-height: 32px; height: 32px; padding: 0 16px; border: 1px solid var(--agentlens-color-pricing-selected); border-radius: 8px; background: var(--agentlens-color-pricing-selected); color: white; font-size: 14px; line-height: 14px; font-weight: 600; }
-.agentlens-workbench .agentlens-pricing-payments.agentlens-pricing-continue.has-wallet button { flex-basis: 200px; width: 200px; }
+.agentlens-workbench .agentlens-pricing-payments.agentlens-pricing-continue { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px var(--agentlens-payment-column-gap); }
+.agentlens-workbench .agentlens-pricing-payments.agentlens-pricing-continue button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: 0 1 160px; width: 160px; min-height: 32px; height: auto; padding: 0 12px; border: 1px solid var(--agentlens-color-pricing-selected); border-radius: 8px; background: var(--agentlens-color-pricing-selected); color: white; font-size: 14px; line-height: 14px; font-weight: 400; }
+.agentlens-workbench .agentlens-pricing-payments.agentlens-pricing-continue.has-wallet button { flex-basis: var(--agentlens-wallet-button-width); width: var(--agentlens-wallet-button-width); }
+.agentlens-workbench .agentlens-pricing-payments.agentlens-pricing-continue.has-wallet .agentlens-wallet-payment { flex-basis: auto; flex-wrap: wrap; width: max-content; min-width: min(var(--agentlens-wallet-button-width), 100%); max-width: 100%; padding-block: 4px; }
 .agentlens-workbench .agentlens-pricing-payments.agentlens-pricing-continue button:disabled { opacity: .45; cursor: default; }
 .agentlens-pricing-payments img { width: 16px; height: 16px; }
-.agentlens-payment-method-note { max-width: 640px; margin: 24px auto 0; font-size: 12px; line-height: 16px; }
+.agentlens-wallet-payment-methods { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.agentlens-wallet-payment-icons { display: inline-flex; align-items: center; gap: 3px; }
+.agentlens-wallet-payment-icons img { flex: none; }
 .agentlens-workbench .agentlens-billing-replacement-dialog { padding: 35px 23px 33px; }
 .agentlens-workbench .agentlens-billing-replacement-dialog header h2 { font-size: 18px; line-height: 29px; font-weight: 400; }
 .agentlens-workbench .agentlens-billing-replacement-dialog header > button { position: absolute; top: 0; right: 0; width: 36px; height: 36px; padding: 0; border: 0; background: transparent; color: var(--agentlens-color-pricing-muted); }
@@ -3092,3 +3101,17 @@ body.agentlens-frameless .agentlens-workbench__header :is(button, a, input, sele
 .agentlens-workbench .agentlens-billing-replacement-dialog .agentlens-pricing-checkout-actions button:hover:not(:disabled) { height: auto; padding-inline: 10px; line-height: 16px; white-space: normal; }
 .agentlens-workbench .agentlens-billing-replacement-dialog .agentlens-pricing-checkout-actions button:first-child { width: 110px; min-width: max-content; background: var(--agentlens-color-pricing-cycle); border: 1px solid var(--agentlens-color-pricing-border); color: var(--agentlens-color-pricing-text); }
 .agentlens-workbench .agentlens-billing-replacement-dialog .agentlens-pricing-checkout-actions button:last-child { width: 226px; min-width: 0; overflow-wrap: anywhere; }
+
+.agentlens-workbench .agentlens-url-bar > button.agentlens-parse-manage-plan { min-width: 116px; white-space: nowrap; }
+
+.agentlens-transcript-pane { padding-bottom: 20px; }
+.agentlens-transcript-form { display: grid; gap: 8px; }
+.agentlens-transcript-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.agentlens-transcript-results { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 8px; }
+.agentlens-transcript-results > div { padding: 10px; border: 1px solid var(--background-modifier-border); border-radius: 8px; }
+.agentlens-transcript-results dt { font-weight: 600; }
+.agentlens-transcript-results dd { margin: 3px 0 0; color: var(--text-muted); }
+.agentlens-transcript-cues { max-height: 18rem; overflow-y: auto; list-style: none; padding: 0; }
+.agentlens-transcript-cues li { display: grid; grid-template-columns: minmax(3rem, max-content) 1fr; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--background-modifier-border); overflow-wrap: anywhere; }
+.agentlens-transcript-cues time { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.agentlens-transcript-video { display: flex; align-items: center; gap: 8px; margin-block: 12px; }

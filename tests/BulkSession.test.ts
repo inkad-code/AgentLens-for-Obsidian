@@ -21,6 +21,20 @@ function page(ids: string[], cursor: string | null, pageNumber: number): FetchPa
 }
 
 describe("BulkSession", () => {
+  it("keeps anonymous demo pages and previews out of live supplementation", async () => {
+    const session = new BulkSession({ demo: true });
+    const first = page(["a"], "cursor-2", 1);
+    first.content = first.content.map(post => ({ ...post, needSupplement: true }));
+    await session.load(null, async () => first);
+    await session.load("cursor-2", async () => page(["b"], null, 2));
+    expect(session.rows().every(preview => preview.demo)).toBe(true);
+    const supplement = vi.fn();
+    const original = session.rows()[0];
+    await expect(session.supplement("youtube:a", supplement)).resolves.toBe(original);
+    expect(supplement).not.toHaveBeenCalled();
+    expect(session.hasPendingDetails("youtube:a")).toBe(false);
+  });
+
   it("keeps stable selections across pages and merges duplicate rows", async () => {
     const session = new BulkSession();
     await session.load(null, async () => page(["a", "b"], "cursor-2", 1));

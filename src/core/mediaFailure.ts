@@ -7,7 +7,8 @@ const failedTargets = new WeakMap<MediaDownloadError, string>();
 
 /** Download response facts are distinct from display text and local filesystem errors. */
 export class MediaDownloadError extends Error {
-  constructor(readonly kind: MediaFailureKind, message: string, readonly status?: number, readonly deferred = false) {
+  constructor(readonly kind: MediaFailureKind, message: string, readonly status?: number, readonly deferred = false,
+    readonly reason?: "network") {
     super(message);
     this.name = "MediaDownloadError";
   }
@@ -17,6 +18,9 @@ export class MediaDownloadError extends Error {
     if (target) failedTargets.set(error, target);
     return error;
   }
+  static network(message = "Could not reach the media server."): MediaDownloadError {
+    return new MediaDownloadError("retryable", message, undefined, false, "network");
+  }
   recoveryTarget(): string | undefined { return failedTargets.get(this); }
 }
 
@@ -25,7 +29,8 @@ export class MediaRecoveryError extends MediaDownloadError {
   constructor(cause: unknown) {
     super(cause instanceof MediaDownloadError ? cause.kind : "retryable",
       "Media download recovery failed. Retry the failed attachment.",
-      cause instanceof MediaDownloadError ? cause.status : undefined);
+      cause instanceof MediaDownloadError ? cause.status : undefined, false,
+      cause instanceof MediaDownloadError ? cause.reason : undefined);
     this.name = "MediaRecoveryError";
     this.cause = cause;
   }

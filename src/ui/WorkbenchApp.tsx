@@ -2,6 +2,7 @@ import { DemoAuthDialog } from "./workbench/DemoAuthDialog";
 import { DiagnosticExportDialog } from "./workbench/DiagnosticExportDialog";
 import { AccountFollowsDialog } from "./workbench/AccountFollowsDialog";
 import { SINGLE_FETCH_REVIEW } from "../core/releaseProfile";
+import { TranscriptPane } from "./workbench/TranscriptPane";
 import { useHostDocument, useHostWindow } from "./workbench/HostDocument";
 import { WorkbenchDialog } from "./workbench/WorkbenchDialog";
 import { EmailAuthPage } from "./workbench/EmailAuthPage";
@@ -11,6 +12,7 @@ import type { AgentLensWorkbenchPort } from "../workbench/ports";
 import { ActivityPane } from "./ActivityPane";
 import { SingleFetchPane } from "./workbench/SingleFetchPane";
 import { BulkFetchPane } from "./workbench/BulkFetchPane";
+import type { TrialUi } from "../workbench/ManualTrial";
 import { AutoFetchPane } from "./workbench/AutoFetchPane";
 import { SupportedPlatforms, billingAction } from "./workbench/shared";
 import { useWorkbenchSession } from "./workbench/useWorkbenchSession";
@@ -24,6 +26,7 @@ import type { WorkbenchDefaults, WorkbenchTab } from "./workbench/types";
 import { I18nProvider, useI18n } from "../i18n/I18nProvider";
 import type { Locale, TranslationKey } from "../i18n/catalog";
 import { UpdateNotice } from "./workbench/UpdateNotice";
+import { feedbackCopy } from "../core/user-feedback";
 import type { PluginUiPreferences } from "../runtime/PluginStateStore";
 
 export type { WorkbenchDefaults, WorkbenchTab } from "./workbench/types";
@@ -81,13 +84,35 @@ function WorkbenchContent({ initialTab = "single", initialUrl, service, onOpenNo
   const { t } = useI18n();
   const {
     activeTab, resetVersions, setDraft, requestTab, handleKeyDown
-  } = useWorkflowTabs(SINGLE_FETCH_REVIEW && initialTab === "auto" ? "single" : initialTab, onDirtyStateChange);
+  } = useWorkflowTabs(SINGLE_FETCH_REVIEW && (initialTab === "auto" || initialTab === "transcript") ? "single" : initialTab, onDirtyStateChange);
   const {
     authState, authRestoring, authBusy, authRecovering, sessionRecovery, authError, capabilities, capabilitiesError, publicCatalog, publicCatalogError, account, accountUpdatedAt,
     accountStale, accountBusy, beginSignIn, retryRestore,
     cancelSignIn, signOut, refreshAccount, emailSignIn, openAuthorizationPage
   } = useWorkbenchSession(service);
   const [view, setView] = useState<"workflows" | "activity" | "login" | "register" | "plans">("workflows");
+  const [trial, setTrial] = useState<TrialUi>();
+  const [startingTrial, setStartingTrial] = useState(false);
+  const [trialError, setTrialError] = useState<string>();
+  const refreshTrial = () => { void service?.trialStatus?.().then(setTrial).catch(() => undefined); };
+  useEffect(() => {
+    let current = true;
+    const read = async () => {
+      if (authState.status === "signed_in") await service?.linkTrial?.().catch(() => undefined);
+      const next = await service?.trialStatus?.();
+      if (current) setTrial(next);
+    };
+    void read().catch(() => undefined);
+    return () => { current = false; };
+  }, [service, authState.status]);
+  async function startTrial() {
+    if (!service?.startTrial || startingTrial) return;
+    setStartingTrial(true);
+    setTrialError(undefined);
+    try { setTrial(await service.startTrial()); }
+    catch (error) { setTrialError(error instanceof Error ? error.message : "The trial is unavailable."); }
+    finally { setStartingTrial(false); }
+  }
   // Window reopen and legacy sessions always use the in-plugin authentication page.
   useEffect(() => {
     if (authState.status === "authorizing" && !authState.provider) {
@@ -159,6 +184,14 @@ function WorkbenchContent({ initialTab = "single", initialUrl, service, onOpenNo
     return () => { active = false; };
   }, [service]);
 
+  const fetchBlocked = authState.status === "signed_in" && account?.subscription.fetchAllowed === false;
+  const blockedReason = account?.subscription.fetchBlockedReason;
+  const creditsBlocked = ["QUOTA_EXHAUSTED", "QUOTA_EXCEEDED", "INSUFFICIENT_QUOTA"].includes(blockedReason ?? "");
+  const accountError = fetchBlocked ? creditsBlocked ? feedbackCopy.credits
+    : blockedReason === "SUBSCRIPTION_EXPIRED" ? feedbackCopy.planExpired : feedbackCopy.plan : null;
+  const accountErrorTitle = creditsBlocked ? "Fetch credits exhausted" : blockedReason === "SUBSCRIPTION_EXPIRED" ? "Your plan has expired" : "Active plan required";
+  function openManagePlan() { setAccountOpen(false); setView("plans"); }
+
   function dismissUpdate(version: string) {
     const next = { ...uiPreferences, dismissedUpdateVersion: version };
     setUiPreferences(next);
@@ -177,9 +210,10 @@ function WorkbenchContent({ initialTab = "single", initialUrl, service, onOpenNo
           <button type="button" aria-pressed={activeTab !== "auto" && view !== "activity"} onClick={() => { setView("workflows"); setBulkNavigationVersion(value => value + 1); requestTab("single"); }}>{t("nav.single")}</button>
           <button type="button" id={`${panelId}-tab-auto`} aria-pressed={activeTab === "auto" && view !== "activity"} onClick={() => { setView("workflows"); requestTab("auto"); }}>{t("nav.auto")}</button>
         </nav>}
-        <div className={`agentlens-account-summary${authState.status !== "signed_in" && !sessionRecovery ? " has-sign-in" : ""}`} aria-label="Account status">
+        <div className={`agentlens-account-summary${authState.status === "signed_in" ? " has-account" : !sessionRecovery ? " has-sign-in" : ""}`} aria-label="Account status">
           {authState.status === "signed_in" ? <button type="button" ref={accountTrigger} className="agentlens-account-trigger" aria-label="Account menu" aria-expanded={accountOpen} aria-controls={`${panelId}-account`} onClick={event => { focusAccountOnOpen.current = event.detail === 0; setAccountOpen(!accountOpen); }} onKeyDown={event => {if (event.key === 'ArrowDown') {event.preventDefault(); if (accountOpen) focusFirstAccountAction(); else {focusAccountOnOpen.current = true; setAccountOpen(true);}}}}>
-            <strong>{authRestoring ? "Restoring…" : account?.user.name ?? "Account"}</strong><span> · {capabilities?.plan ?? "Connected"} · {account ? `${account.subscription.remainingQuota}/${account.subscription.totalQuota}` : capabilities?.quotaRemaining ?? "—"}</span>
+            <strong>{authRestoring ? "Restoring…" : account?.user.name ?? "Account"}</strong>
+            <span>{capabilities?.plan ?? "Connected"} · {account ? `${account.subscription.remainingQuota}/${account.subscription.totalQuota}` : capabilities?.quotaRemaining ?? "—"}</span>
           </button> : sessionRecovery ? <button type="button" disabled>Reconnecting…</button> : <>
             <button type="button" aria-label="Sign in / register" onClick={() => { if (authState.status === "authorizing") void cancelSignIn(); setView("login"); }} disabled={authBusy || (authState.status === "authorizing" && authState.provider !== "google")}>{authRestoring ? "Restoring…" : "Log In"}</button>
             <button type="button" className="mod-cta" onClick={() => { if (authState.status === "authorizing") void cancelSignIn(); setView("register"); }} disabled={authBusy || (authState.status === "authorizing" && authState.provider !== "google")}>Start Free</button>
@@ -196,11 +230,12 @@ function WorkbenchContent({ initialTab = "single", initialUrl, service, onOpenNo
         <div><strong>{sessionRecovery.attempt >= 3 ? "AgentLens is still unavailable" : "Reconnecting to AgentLens…"}</strong><span>Your saved sign-in and current work are kept. We’ll retry automatically.</span></div>
         <button type="button" onClick={() => void retryRestore()} disabled={authBusy || authRecovering || authRestoring}>{authRecovering ? "Reconnecting…" : "Retry now"}</button>
       </section>}
-      {authState.status === "error" && authState.reason !== "credential_unavailable" && authState.reason !== "refresh_unavailable" && authState.provider !== "google" && <section className="agentlens-device-auth" role="alert">
+      {authState.status === "error" && (authState.reason === "denied" || authState.reason === "expired") && authState.provider !== "google" && <section className="agentlens-device-auth" role="alert">
         <div><strong>{`Authorization ${authState.reason === "denied" ? "was denied" : authState.reason === "expired" ? "expired" : "could not be restored"}`}</strong><span>{authState.provider === "email" ? "Enter your email and password again to reconnect this vault." : "The previous code or session will not be reused."}</span></div>
         <button type="button" className="mod-cta" onClick={() => void signOut().then(() => setView("login"))} disabled={authBusy}>{authState.provider === "email" ? "Back to email sign-in" : "Start again"}</button>
       </section>}
       {authError && !sessionRecovery && view !== "login" && view !== "register" && !(view === "workflows" && activeTab === "auto" && authState.status === "signed_in") && <p className="agentlens-inline-error" role="alert">{authError}</p>}
+      {accountError && <p className="agentlens-inline-error" role="alert" aria-label={accountErrorTitle}>{accountError}</p>}
       {capabilities && service && <UpdateNotice
         currentVersion={service.clientVersion()}
         capabilities={capabilities}
@@ -239,11 +274,21 @@ function WorkbenchContent({ initialTab = "single", initialUrl, service, onOpenNo
       <main ref={workflowBody} className={`agentlens-workbench__body${fittedSingle ? " is-single-preview" : ""}`} hidden={view !== "workflows" || authState.status !== "signed_in" && (authRestoring || Boolean(sessionRecovery))}>
       {activeTab !== "auto" && <>
         <div className="agentlens-pane__intro">
-          <p className="agentlens-eyebrow">CAPTURE CONTENT</p>
-          <h2>Fetch from social media</h2>
-          <p>Choose a task, paste a link, and review the result before saving.</p>
+          <p className="agentlens-eyebrow">SOCIAL CONTENT TO NOTES</p>
+          <h2>Save social posts as Markdown notes</h2>
+          <p>Paste a social post or creator profile link, then save the content into vault, with optional image and video downloads</p>
         </div>
-        <SupportedPlatforms capabilities={authState.status === "signed_in" ? capabilities : null} publicCatalog={authState.status === "signed_in" ? null : publicCatalog} catalogError={authState.status === "signed_in" ? capabilitiesError : publicCatalogError} mode={activeTab === "bulk" ? "profile" : "single"} />
+        {activeTab !== "transcript" && <SupportedPlatforms capabilities={authState.status === "signed_in" ? capabilities : null} publicCatalog={authState.status === "signed_in" ? null : publicCatalog} catalogError={authState.status === "signed_in" ? capabilitiesError : publicCatalogError} mode={activeTab === "bulk" ? "profile" : "single"} />}
+        {trial && authState.status === "signed_out" && <div className="agentlens-pane__intro" aria-label="Anonymous trial">
+          {trial.mode === undefined && <button type="button" className="mod-cta" disabled={startingTrial} onClick={() => void startTrial()}>
+            {startingTrial ? "Starting…" : "Start trial"}
+          </button>}
+          {trial.balance && !trial.balance.accountLinked && <p role="status">{trial.balance.remaining} of 3 trial uses available
+            {trial.balance.reserved > 0 ? ` · ${trial.balance.reserved} in progress` : ""}.</p>}
+          {(trial.mode === "A" || trial.balance?.accountLinked || trial.balance?.remaining === 0) &&
+            <button type="button" onClick={() => setView("login")}>Sign in to continue</button>}
+          {trialError && <p className="agentlens-inline-error" role="alert">{trialError}</p>}
+        </div>}
       </>}
       <div className={`agentlens-import-shell is-${activeTab}${(activeTab === "bulk" && bulkSaveView || activeTab === "single" && singleSaveView) ? " is-save-view" : ""}`} style={{backgroundImage: activeTab === "auto" ? undefined : `url(${activeTab === "bulk" ? importAssets.bulkSurface : importAssets.singleSurface})`}}>
       <nav hidden={activeTab === "auto" || (activeTab === "bulk" && bulkSaveView || activeTab === "single" && singleSaveView)} className="agentlens-tabs" role="tablist" aria-label="AgentLens workflows">
@@ -262,16 +307,21 @@ function WorkbenchContent({ initialTab = "single", initialUrl, service, onOpenNo
             onClick={() => { if (tab.id === "bulk") setBulkNavigationVersion(value => value + 1); requestTab(tab.id); }}
             onKeyDown={(event) => handleKeyDown(event, tab.id)}
           >
-            <strong>{tab.id === "single" ? "Single post fetch" : "Creator profile bulk fetch"}</strong>
-            <span>{tab.id === "single" ? "Download media from one work link" : "Import works from one creator page"}</span>
+            <strong>{tab.id === "single" ? "Single Post Import" : "Creator Profile Bulk Import"}</strong>
+            <span>{tab.id === "single" ? "Save one social post as a note" : "Save selected creator profile posts in bulk"}</span>
           </button>
         ))}
       </nav>
 
-        <section id={`${panelId}-single`} role="tabpanel" aria-labelledby={`${panelId}-tab-single`} hidden={activeTab !== "single"}><SingleFetchPane onDemoSaved={()=>setDemoAuthOpen(true)} onPreviewChange={setSingleHasPreview} onSaveViewChange={setSingleSaveView} onStartFree={()=>setView("register")} onRequestSignUp={()=>setSignUpPrompt(true)} key={resetVersions.single} initialUrl={initialUrl} service={service} signedIn={authState.status === "signed_in"} capabilities={capabilities} onOpenNote={onOpenNote} defaults={defaults} onAccountChanged={() => void refreshAccount()} onDraftChange={(dirty) => setDraft("single", dirty)} /></section>
-        <section id={`${panelId}-bulk`} role="tabpanel" aria-labelledby={`${panelId}-tab-bulk`} hidden={activeTab !== "bulk"}><BulkFetchPane active={activeTab === "bulk" && view === "workflows"} onDemoSaved={()=>setDemoAuthOpen(true)} navigationVersion={bulkNavigationVersion} onStartFree={()=>setView("register")} onRequestSignUp={()=>setSignUpPrompt(true)} onSaveViewChange={setBulkSaveView} key={resetVersions.bulk} service={service} signedIn={authState.status === "signed_in"} capabilities={capabilities} onOpenNote={onOpenNote} defaults={defaults} onAccountChanged={() => void refreshAccount()} onDraftChange={(dirty) => setDraft("bulk", dirty)} /></section>
+        <section id={`${panelId}-single`} role="tabpanel" aria-labelledby={`${panelId}-tab-single`} hidden={activeTab !== "single"}><SingleFetchPane trial={trial} onTrialChanged={refreshTrial} fetchBlocked={fetchBlocked} onManagePlan={openManagePlan} onDemoSaved={()=>setDemoAuthOpen(true)} onPreviewChange={setSingleHasPreview} onSaveViewChange={setSingleSaveView} onStartFree={()=>setView("register")} onRequestSignUp={()=>setSignUpPrompt(true)} key={resetVersions.single} initialUrl={initialUrl} service={service} signedIn={authState.status === "signed_in"} capabilities={capabilities} onOpenNote={onOpenNote} defaults={defaults} onAccountChanged={() => void refreshAccount()} onDraftChange={(dirty) => setDraft("single", dirty)} /></section>
+        <section id={`${panelId}-bulk`} role="tabpanel" aria-labelledby={`${panelId}-tab-bulk`} hidden={activeTab !== "bulk"}><BulkFetchPane trial={trial} onTrialChanged={refreshTrial} fetchBlocked={fetchBlocked} onManagePlan={openManagePlan} active={activeTab === "bulk" && view === "workflows"} onDemoSaved={()=>setDemoAuthOpen(true)} navigationVersion={bulkNavigationVersion} onStartFree={()=>setView("register")} onRequestSignUp={()=>setSignUpPrompt(true)} onSaveViewChange={setBulkSaveView} key={resetVersions.bulk} service={service} signedIn={authState.status === "signed_in"} capabilities={capabilities} onOpenNote={onOpenNote} defaults={defaults} onAccountChanged={() => void refreshAccount()} onDraftChange={(dirty) => setDraft("bulk", dirty)} /></section>
+        {!SINGLE_FETCH_REVIEW && <section id={`${panelId}-transcript`} role="tabpanel" aria-labelledby={`${panelId}-tab-transcript`} hidden={activeTab !== "transcript"}>
+          <TranscriptPane service={service} signedIn={authState.status === "signed_in"} accountId={account?.user.id} trial={trial}
+            defaults={defaults} onSignIn={() => setView("login")} onBalanceChanged={() => { refreshTrial(); if (authState.status === "signed_in") void refreshAccount(); }}
+            onTrialSaved={() => setDemoAuthOpen(true)} onOpenNote={onOpenNote} />
+        </section>}
       </div>
-        {!SINGLE_FETCH_REVIEW && <section className="agentlens-auto-tab" id={`${panelId}-auto`} role="tabpanel" aria-labelledby={`${panelId}-tab-auto`} hidden={activeTab !== "auto"}><AutoFetchPane statusError={sessionRecovery ? null : authError} removedFollowId={removedFollowId} onOpenFolder={onOpenFolder} onStartFree={()=>setView("register")} onRequestSignUp={()=>setSignUpPrompt(true)} key={resetVersions.auto} service={service} signedIn={!authRestoring && authState.status === "signed_in"} capabilities={capabilities} capabilitiesError={capabilitiesError} defaults={defaults} onAccountChanged={() => void refreshAccount()} onDraftChange={(dirty) => setDraft("auto", dirty)} /></section>}
+        {!SINGLE_FETCH_REVIEW && <section className="agentlens-auto-tab" id={`${panelId}-auto`} role="tabpanel" aria-labelledby={`${panelId}-tab-auto`} hidden={activeTab !== "auto"}><AutoFetchPane fetchBlocked={fetchBlocked} onManagePlan={openManagePlan} statusError={sessionRecovery ? null : authError} removedFollowId={removedFollowId} onOpenFolder={onOpenFolder} onStartFree={()=>setView("register")} onRequestSignUp={()=>setSignUpPrompt(true)} key={resetVersions.auto} service={service} signedIn={!authRestoring && authState.status === "signed_in"} capabilities={capabilities} capabilitiesError={capabilitiesError} defaults={defaults} onAccountChanged={() => void refreshAccount()} onDraftChange={(dirty) => setDraft("auto", dirty)} /></section>}
 
       </main>
     </section>
@@ -281,5 +331,6 @@ function WorkbenchContent({ initialTab = "single", initialUrl, service, onOpenNo
 function tabTranslationKey(tab: WorkbenchTab): TranslationKey {
   if (tab === "single") return "nav.single";
   if (tab === "bulk") return "nav.bulk";
+  if (tab === "transcript") return "nav.transcript";
   return "nav.auto";
 }

@@ -8,6 +8,8 @@ export type NoteTemplateId = "default" | "compact";
 
 export interface PreviewResult {
   historyRestore?: boolean;
+  trial?: boolean;
+  transcript?: boolean;
   deferredMedia?: readonly import("../core/mediaFailure").MediaFailureEvidence[] | undefined;
   indexedWrite?: { scope: OperationScope; request: WriteResultsRequest; folderPath: string } | undefined;
   fetchRunId?: string | undefined;

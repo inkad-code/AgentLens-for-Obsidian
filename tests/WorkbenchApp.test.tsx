@@ -244,7 +244,7 @@ describe("WorkbenchApp", () => {
     });
     render(<WorkbenchApp service={service} />);
 
-    await screen.findByRole("heading", { name: "Fetch from social media" });
+    await screen.findByRole("heading", { name: "Save social posts as Markdown notes" });
     expect(screen.queryByRole("dialog", { name: "Build a traceable research vault" })).not.toBeInTheDocument();
     expect(setUiPreferences).not.toHaveBeenCalled();
     expect(service.previewSingle).not.toHaveBeenCalled();
@@ -255,7 +255,7 @@ describe("WorkbenchApp", () => {
     Object.assign(service as object, { uiPreferences: async () => ({ onboardingVersion: 1 }) });
     render(<WorkbenchApp service={service} />);
 
-    await screen.findByRole("heading", { name: "Fetch from social media" });
+    await screen.findByRole("heading", { name: "Save social posts as Markdown notes" });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Build a traceable research vault" })).not.toBeInTheDocument());
   });
   it("waits for session restoration before loading account data or enabling live actions", async () => {
@@ -278,7 +278,7 @@ describe("WorkbenchApp", () => {
     expect(account).not.toHaveBeenCalled();
 
     finishRestore?.();
-    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
     expect(capabilities).toHaveBeenCalledTimes(1);
     expect(account).toHaveBeenCalledTimes(1);
   });
@@ -324,7 +324,7 @@ describe("WorkbenchApp", () => {
     expect(within(connection).getByRole("button", { name: "Reconnecting…" })).toBeDisabled();
 
     await act(async () => { finishRestore?.(); });
-    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
     expect(screen.queryByRole("status", { name: "Session connection" })).not.toBeInTheDocument();
     expect(screen.getByRole("main")).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Public post URL" })).not.toHaveAttribute("readonly");
@@ -397,7 +397,7 @@ describe("WorkbenchApp", () => {
     });
 
     expect(screen.getByRole("status", { name: "Session connection" })).toHaveTextContent("Reconnecting to AgentLens…");
-    expect(screen.getByRole("button", { name: "Account menu" })).toHaveTextContent("User · pro · 99/100");
+    expect(screen.getByRole("button", { name: "Account menu" })).toHaveTextContent("pro · 99/100");
     expect(screen.getByRole("region", { name: "AgentLens account" })).toBeVisible();
     expect(screen.getByText("99 / 100")).toBeVisible();
     expect(input).toBeVisible();
@@ -418,7 +418,7 @@ describe("WorkbenchApp", () => {
       expect(capabilities).toHaveBeenCalledTimes(capabilityCalls + 1);
     });
     expect(screen.queryByRole("status", { name: "Session connection" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Account menu" })).toHaveTextContent("User · pro · 99/100");
+    expect(screen.getByRole("button", { name: "Account menu" })).toHaveTextContent("pro · 99/100");
     expect(screen.getByRole("region", { name: "AgentLens account" })).toBeVisible();
     expect(screen.getByText("99 / 100")).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Creator profile URL" })).toHaveValue("https://youtube.com/@draft-creator");
@@ -470,14 +470,14 @@ describe("WorkbenchApp", () => {
     expect(screen.getByText(/Check Obsidian’s Keychain settings/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Sign in / register" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Retry saved sign-in" }));
-    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
     expect(restoreAuth).toHaveBeenCalledTimes(2);
   });
 
   it("opens the fixed-link anonymous demo in Single Fetch", () => {
     render(<WorkbenchApp />);
 
-    expect(screen.getByRole("heading", { name: "Fetch from social media" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Save social posts as Markdown notes" })).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Public post URL" })).toHaveValue(SINGLE_DEMO_LINK);
     expect(screen.getByRole("textbox", { name: "Public post URL" })).toHaveAttribute("readonly");
     expect(within(screen.getByRole("tabpanel")).queryByText(/Try this link for a demo preview/i)).not.toBeInTheDocument();
@@ -513,6 +513,28 @@ describe("WorkbenchApp", () => {
     expect(screen.getByRole("heading", { name: "Try Your First Sync, Zero Setup Required" })).toBeVisible();
   });
 
+  it.each(["x", "xiaohongshu", "weibo"])("previews anonymous %s demo posts without live detail requests", async platform => {
+    const service = signedInService();
+    const sample = await service.fetchProfilePage("unused", null);
+    service.authState = () => ({ status: "signed_out" });
+    service.restoreAuth = async () => ({ status: "signed_out" });
+    vi.mocked(service.fetchProfilePage).mockResolvedValue({ ...sample, content: [{
+      ...sample.content[0]!, platform, needSupplement: true, supplementUrl: "https://example.com/post-a"
+    }] });
+    service.supplementContent = vi.fn(async () => { throw new Error("Sign in before opening live post details."); });
+    const planPreview = vi.spyOn(service, "planPreview");
+    render(<WorkbenchApp initialTab="bulk" service={service} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Fetch page" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Preview Post A" }));
+    const preview = await screen.findByRole("dialog", { name: "Preview" });
+    expect(await within(preview).findByRole("heading", { name: "Post A" })).toBeVisible();
+    expect(within(preview).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(preview).queryByRole("status")).not.toBeInTheDocument();
+    expect(service.supplementContent).not.toHaveBeenCalled();
+    expect(planPreview).toHaveBeenCalledWith(expect.objectContaining({ demo: true }), expect.anything());
+    expect(service.previewSingle).not.toHaveBeenCalled();
+  });
+
   it("uses the formal save plan and results flow for anonymous bulk demo pages", async () => {
     const service = signedInService();
     const sample = await service.fetchProfilePage("unused", null);
@@ -530,9 +552,11 @@ describe("WorkbenchApp", () => {
     fireEvent.click(screen.getByRole("button", { name: "Fetch page" }));
     await screen.findByRole("button", { name: "Preview Post A" });
     expect(fetchProfilePage).toHaveBeenNthCalledWith(1, BULK_DEMO_LINK, null);
+    expect(screen.queryByText("All available posts have been loaded.")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Fetch more" }));
     await screen.findByRole("button", { name: "Preview Post B" });
     expect(fetchProfilePage).toHaveBeenNthCalledWith(2, BULK_DEMO_LINK, "snapshot");
+    expect(await screen.findByText("All available posts have been loaded.")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Fetch more" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("checkbox", { name: "Select visible" }));
     fireEvent.click(screen.getByRole("button", { name: "Review batch manifest" }));
@@ -626,7 +650,7 @@ describe("WorkbenchApp", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Bulk Fetch" }));
     expect(screen.getByRole("textbox", { name: "Creator profile URL" })).toHaveValue(BULK_DEMO_LINK);
     expect(screen.getByRole("textbox", { name: "Creator profile URL" })).toHaveAttribute("readonly");
-    expect(screen.getByRole("heading", { name: "Fetch from social media" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Save social posts as Markdown notes" })).toBeVisible();
     expect(screen.getByRole("tab", { name: "Bulk Fetch" })).toHaveAttribute("aria-selected", "true");
 
     fireEvent.click(screen.getByRole("button", { name: "Auto-fetch" }));
@@ -896,7 +920,7 @@ describe("WorkbenchApp", () => {
     const service = signedInService();
     render(<WorkbenchApp service={service} />);
 
-    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
     const input = screen.getByRole("textbox", { name: "Public post URL" });
     fireEvent.change(input, { target: { value: "全部学错！不要把in和on背成固定搭配！ https://v.douyin.com/4a9qaT01UYA/ 复制此链接，打开抖音搜索" } });
     fireEvent.click(screen.getByRole("button", { name: "Fetch preview" }));
@@ -913,7 +937,7 @@ describe("WorkbenchApp", () => {
     Object.assign(service as object, { previewSingle });
     render(<WorkbenchApp service={service} />);
 
-    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
     const input = screen.getByRole("textbox", { name: "Public post URL" });
     fireEvent.change(input, { target: { value: "https://youtube.com/watch?v=first" } });
     const fetchButton = screen.getByRole("button", { name: "Fetch preview" });
@@ -947,7 +971,7 @@ describe("WorkbenchApp", () => {
     });
     render(<WorkbenchApp service={service} />);
 
-    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
     fireEvent.change(screen.getByRole("textbox", { name: "Public post URL" }), { target: { value: "https://youtube.com/watch?v=post-a" } });
     fireEvent.click(screen.getByRole("button", { name: "Fetch preview" }));
     fireEvent.click(await screen.findByRole("button", { name: "Save" }));
@@ -984,7 +1008,7 @@ describe("WorkbenchApp", () => {
   it("keeps Bulk filtering and preview while save settings stay in the main workflow", async () => {
     render(<WorkbenchApp initialTab="bulk" service={signedInService()} />);
 
-    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
     fireEvent.change(await screen.findByRole("textbox", { name: "Creator profile URL" }), { target: { value: "https://youtube.com/@creator" } });
     fireEvent.click(screen.getByRole("button", { name: "Fetch page" }));
     expect(await screen.findByText("Post A")).toBeVisible();
@@ -1018,7 +1042,7 @@ describe("WorkbenchApp", () => {
     Object.assign(service as object, { fetchProfilePage });
     render(<WorkbenchApp initialTab="bulk" service={service} />);
 
-    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
     const input = screen.getByRole("textbox", { name: "Creator profile URL" });
     fireEvent.change(input, { target: { value: "https://youtube.com/@first" } });
     const fetchButton = screen.getByRole("button", { name: "Fetch page" });
@@ -1062,7 +1086,7 @@ describe("WorkbenchApp", () => {
     Object.assign(service as object, { fetchProfilePage });
     render(<WorkbenchApp initialTab="bulk" service={service} />);
 
-    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
     const input = screen.getByRole("textbox", { name: "Creator profile URL" });
     fireEvent.change(input, { target: { value: "https://youtube.com/@first" } });
     fireEvent.click(screen.getByRole("button", { name: "Fetch page" }));
@@ -1090,7 +1114,7 @@ describe("WorkbenchApp", () => {
     });
     render(<WorkbenchApp initialTab="bulk" service={service} />);
 
-    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
     const input = await screen.findByRole("textbox", { name: "Creator profile URL" });
     fireEvent.change(input, { target: { value: "https://youtube.com/@first" } });
     fireEvent.click(screen.getByRole("button", { name: "Fetch page" }));
@@ -1127,7 +1151,7 @@ describe("WorkbenchApp", () => {
       .mockImplementationOnce(async (prepared) => resultFor(prepared, "partial"))
       .mockImplementationOnce(async (prepared) => resultFor(prepared, "complete"));
     render(<WorkbenchApp initialTab="bulk" service={service} />);
-    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+    await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
     fireEvent.change(await screen.findByRole("textbox", { name: "Creator profile URL" }), { target: { value: "https://youtube.com/@creator" } });
     fireEvent.click(screen.getByRole("button", { name: "Fetch page" }));
     await screen.findByText("Post A");
@@ -1135,6 +1159,7 @@ describe("WorkbenchApp", () => {
     fireEvent.click(screen.getByRole("button", { name: "Review batch manifest" }));
     fireEvent.click(await screen.findByRole("button", { name: "Save 1 notes to vault" }));
 
+    expect(await screen.findByText("Note saved. Some files couldn’t be saved. Retry the partial note.")).toBeVisible();
     fireEvent.click(await screen.findByRole("button", { name: "Retry failed and partial notes" }));
     await waitFor(() => expect(screen.getByText(/1 saved; 0 already saved \(0 partial\); 0 failed/)).toBeVisible());
     expect(service.savePrepared).toHaveBeenCalledTimes(2);
@@ -1161,7 +1186,7 @@ describe("WorkbenchApp", () => {
     const service = signedInService();
     vi.mocked(service.savePrepared).mockImplementationOnce(async (prepared) => ({
       successes: prepared.map(({ manifest }) => successfulSave(manifest, "partial", [
-        { mediaId: "media-a", path: "attachments/media-a.mp4", status: "failed" }
+        { mediaId: "media-a", path: "attachments/media-a.mp4", status: "failed", downloadFailureReason: "network" }
       ])),
       failures: []
     }));
@@ -1173,6 +1198,7 @@ describe("WorkbenchApp", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Save 1 notes to vault" }));
     await screen.findByRole("button", { name: "Retry failed and partial notes" });
+    expect(screen.getByText("Note saved. A network error interrupted the attachment download. Check your connection, turn on your proxy or VPN if needed, then retry.")).toBeVisible();
     const priorManifest = await service.planPreview(
       { post: {
         platform: "youtube", contentId: "post-a", canonicalUrl: "https://youtube.com/watch?v=post-a",
@@ -1903,6 +1929,114 @@ describe("Creator management parity", () => {
 });
 
 describe("Live account usage refresh", () => {
+  it.each([
+    ["single", "QUOTA_EXHAUSTED"], ["single", "SUBSCRIPTION_EXPIRED"], ["single", "SUBSCRIPTION_REQUIRED"],
+    ["bulk", "QUOTA_EXHAUSTED"], ["bulk", "SUBSCRIPTION_EXPIRED"], ["bulk", "SUBSCRIPTION_REQUIRED"]
+  ] as const)("replaces %s Parse with plan management for %s and guards form submissions", async (tab, reason) => {
+    const service = signedInService();
+    const account = await service.account();
+    service.account = vi.fn(async () => ({ ...account, subscription: { ...account.subscription,
+      fetchAllowed: false, fetchBlockedReason: reason, remainingQuota: 0 } }));
+    render(<WorkbenchApp initialTab={tab} service={service} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Account menu" })).toHaveTextContent("0/100"));
+    const input = screen.getByLabelText(tab === "single" ? "Public post URL" : "Creator profile URL");
+    const form = input.closest("form")!;
+    expect(within(form).getByRole("button", { name: "Manage Plan" })).toBeEnabled();
+    expect(within(form).queryByRole("button", { name: tab === "single" ? "Fetch preview" : "Fetch page" })).not.toBeInTheDocument();
+    fireEvent.click(within(form).getByRole("button", { name: "Manage Plan" }));
+    expect(await screen.findByRole("region", { name: "Choose a plan" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.change(input, { target: { value: tab === "single" ? "https://youtube.com/watch?v=post-a" : "https://youtube.com/@creator" } });
+    fireEvent.submit(form);
+    expect(await screen.findByRole("region", { name: "Choose a plan" })).toBeVisible();
+    expect(service.previewSingle).not.toHaveBeenCalled();
+    expect(service.fetchProfilePage).not.toHaveBeenCalled();
+  });
+
+  it.each(["single", "bulk"] as const)("keeps %s Parse available during a non-blocking low-credit warning", async tab => {
+    const service = signedInService();
+    const account = await service.account();
+    service.account = vi.fn(async () => ({ ...account, subscription: { ...account.subscription,
+      remainingQuota: 2 } }));
+    render(<WorkbenchApp initialTab={tab} service={service} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Account menu" })).toHaveTextContent("2/100"));
+    fireEvent.change(screen.getByLabelText(tab === "single" ? "Public post URL" : "Creator profile URL"),
+      { target: { value: tab === "single" ? "https://youtube.com/watch?v=post-a" : "https://youtube.com/@creator" } });
+    const parse = screen.getByRole("button", { name: tab === "single" ? "Fetch preview" : "Fetch page" });
+    await waitFor(() => expect(parse).toBeEnabled());
+    fireEvent.click(parse);
+    await waitFor(() => expect(tab === "single" ? service.previewSingle : service.fetchProfilePage).toHaveBeenCalledTimes(1));
+  });
+
+  it("guards the Auto-fetch creator Parse form when the account is blocked", async () => {
+    const service = signedInService();
+    const account = await service.account();
+    service.account = vi.fn(async () => ({ ...account, subscription: { ...account.subscription,
+      fetchAllowed: false, fetchBlockedReason: "QUOTA_EXHAUSTED", remainingQuota: 0 } }));
+    const parseCreator = vi.spyOn(service, "parseCreator");
+    render(<WorkbenchApp initialTab="auto" service={service} />);
+    const add = await screen.findByRole("button", { name: "+ Add creator" });
+    await waitFor(() => expect(add).toBeEnabled());
+    fireEvent.click(add);
+    const input = await within(screen.getByRole("tabpanel")).findByLabelText("Creator profile URL");
+    const form = input.closest("form")!;
+    await waitFor(() => expect(within(form).getByRole("button", { name: "Manage Plan" })).toBeEnabled());
+    fireEvent.change(input, { target: { value: "https://youtube.com/@creator" } });
+    fireEvent.submit(form);
+    expect(await screen.findByRole("region", { name: "Choose a plan" })).toBeVisible();
+    expect(parseCreator).not.toHaveBeenCalled();
+    expect(screen.queryByText("Auto-Fetch New Posts")).not.toBeInTheDocument();
+  });
+
+  it("routes Fetch more to plan management when the first page exhausts credits", async () => {
+    const service = signedInService();
+    const account = await service.account();
+    service.account = vi.fn().mockResolvedValueOnce(account).mockResolvedValue({ ...account,
+      subscription: { ...account.subscription, remainingQuota: 0, fetchAllowed: false, fetchBlockedReason: "QUOTA_EXHAUSTED" } });
+    const page = await service.fetchProfilePage("unused", null);
+    vi.mocked(service.fetchProfilePage).mockClear().mockResolvedValue({ ...page, page: { cursor: "next", hasMore: true, pageNumber: 1 } });
+    render(<WorkbenchApp initialTab="bulk" service={service} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Account menu" })).toHaveTextContent("99/100"));
+    fireEvent.change(screen.getByLabelText("Creator profile URL"), { target: { value: "https://youtube.com/@creator" } });
+    const parse = screen.getByRole("button", { name: "Fetch page" });
+    await waitFor(() => expect(parse).toBeEnabled());
+    fireEvent.click(parse);
+    await screen.findByRole("alert", { name: "Fetch credits exhausted" });
+    expect(screen.queryByRole("button", { name: "Fetch more · estimated 1 credit" })).not.toBeInTheDocument();
+    const manageButtons = screen.getAllByRole("button", { name: "Manage Plan" });
+    fireEvent.click(manageButtons.at(-1)!);
+    expect(await screen.findByRole("region", { name: "Choose a plan" })).toBeVisible();
+    expect(service.fetchProfilePage).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores the exhausted banner after signing in again and keeps it through failed refreshes", async () => {
+    const service = signedInService();
+    const healthy = await service.account();
+    const blocked = { ...healthy, subscription: { ...healthy.subscription, remainingQuota: 0,
+      fetchAllowed: false, fetchBlockedReason: "QUOTA_EXHAUSTED" } };
+    service.account = vi.fn().mockResolvedValueOnce(blocked).mockResolvedValueOnce(blocked)
+      .mockRejectedValueOnce(new Error("Temporary account outage")).mockResolvedValue(healthy);
+    const signedIn = service.authState();
+    let listener: Parameters<AgentLensWorkbenchPort["subscribeAuth"]>[0] | undefined;
+    service.subscribeAuth = next => { listener = next; return () => {}; };
+    render(<WorkbenchApp service={service} />);
+    await screen.findByRole("alert", { name: "Fetch credits exhausted" });
+    act(() => listener?.({ status: "signed_out" }));
+    await screen.findByRole("button", { name: "Sign in / register" });
+    expect(screen.queryByRole("alert", { name: "Fetch credits exhausted" })).not.toBeInTheDocument();
+    act(() => listener?.(signedIn));
+    const banner = await screen.findByRole("alert", { name: "Fetch credits exhausted" });
+    fireEvent.click(screen.getByRole("button", { name: "Account menu" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh account" }));
+    await waitFor(() => expect(service.account).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh account" })).toBeEnabled());
+    expect(banner).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh account" }));
+    await waitFor(() => expect(screen.queryByRole("alert", { name: "Fetch credits exhausted" })).not.toBeInTheDocument());
+    expect(service.account).toHaveBeenCalledTimes(4);
+    expect(screen.getByRole("button", { name: "Fetch preview" })).toBeInTheDocument();
+  });
+
   it("refreshes authoritative header quota after Single Fetch", async () => {
     const service = signedInService();
     const initial = await service.account();
@@ -1913,10 +2047,10 @@ describe("Live account usage refresh", () => {
       .mockResolvedValueOnce(initial)
       .mockResolvedValue({ ...initial, subscription: { ...initial.subscription, remainingQuota: 98 } });
     render(<WorkbenchApp service={service} />);
-    await screen.findByText("· pro · 99/100");
+    await screen.findByText("pro · 99/100");
     fireEvent.change(screen.getByLabelText("Public post URL"), { target: { value: "https://youtube.com/watch?v=post-a" } });
     fireEvent.click(screen.getByRole("button", { name: "Fetch preview" }));
-    await screen.findByText("· pro · 98/100");
+    await screen.findByText("pro · 98/100");
     expect(service.previewSingle).toHaveBeenCalledTimes(1);
     expect(service.account).toHaveBeenCalledTimes(2);
   });
@@ -1926,7 +2060,7 @@ it("returns from completed Bulk results by clicking the Single Fetch navigation 
   const service = signedInService();
   vi.mocked(service.savePrepared).mockImplementation(async prepared => ({ successes: prepared.map(({manifest}) => successfulSave(manifest)), failures: [] }));
   render(<WorkbenchApp initialTab="bulk" service={service} />);
-  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
   fireEvent.change(await screen.findByRole("textbox", { name: "Creator profile URL" }), { target: { value: "https://youtube.com/@creator" } });
   fireEvent.click(screen.getByRole("button", { name: "Fetch page" }));
   await screen.findByText("Post A");
@@ -1980,7 +2114,7 @@ it("shows and persists the recent folder even when it is selected", async () => 
   service.uiPreferences = vi.fn(async () => ({ recentFolder: "AgentLens/Inbox", onboardingVersion: 1 }));
   service.setUiPreferences = vi.fn(async () => undefined);
   render(<WorkbenchApp initialTab="bulk" service={service} vaultFolders={["AgentLens/Inbox", "Research"]} />);
-  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
   fireEvent.change(await screen.findByLabelText("Creator profile URL"), { target: { value: "https://youtube.com/@creator" } });
   fireEvent.click(screen.getByRole("button", { name: "Fetch page" }));
   fireEvent.click(await screen.findByRole("button", { name: "Browse destination folder" }));
@@ -1990,12 +2124,84 @@ it("shows and persists the recent folder even when it is selected", async () => 
   expect(service.setUiPreferences).toHaveBeenCalledWith({ recentFolder: "Research" });
 });
 
+it("reuses pending and completed bulk plans without waiting for unselected posts", async () => {
+  const service = signedInService();
+  const originalPlan = service.planPreview.bind(service);
+  const releases = new Map<string, () => void>();
+  const planPreview = vi.spyOn(service, "planPreview").mockImplementation(async (preview, options) => {
+    await new Promise<void>(resolve => releases.set(preview.post.contentId, resolve));
+    return originalPlan(preview, options);
+  });
+  render(<WorkbenchApp initialTab="bulk" service={service} />);
+  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
+  fireEvent.change(await screen.findByLabelText("Creator profile URL"), { target: { value: "https://youtube.com/@creator" } });
+  fireEvent.click(screen.getByRole("button", { name: "Fetch page" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select Post A" }));
+  await waitFor(() => expect(planPreview).toHaveBeenCalledTimes(2));
+  fireEvent.click(screen.getByRole("button", { name: "Review batch manifest" }));
+  expect(planPreview).toHaveBeenCalledTimes(2);
+  await act(async () => releases.get("post-a")!());
+  const review = await screen.findByRole("region", { name: "Save plan and results" });
+  expect(within(review).getByRole("heading", { name: "Post A" })).toBeVisible();
+  expect(planPreview).toHaveBeenCalledTimes(2);
+  await act(async () => releases.get("post-b")!());
+  fireEvent.click(within(review).getByRole("button", { name: "Back to loaded posts" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select Post B" }));
+  fireEvent.click(screen.getByRole("button", { name: "Review batch manifest" }));
+  expect(await screen.findByRole("button", { name: "Save 2 notes to vault" })).toBeVisible();
+  expect(planPreview).toHaveBeenCalledTimes(2);
+});
+
+it("discards bulk plans when destination or media options change", async () => {
+  const service = signedInService();
+  const planPreview = vi.spyOn(service, "planPreview");
+  render(<WorkbenchApp initialTab="bulk" service={service} vaultFolders={["AgentLens/Inbox", "Research"]} />);
+  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
+  fireEvent.change(await screen.findByLabelText("Creator profile URL"), { target: { value: "https://youtube.com/@creator" } });
+  fireEvent.click(screen.getByRole("button", { name: "Fetch page" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select Post A" }));
+  await waitFor(() => expect(planPreview).toHaveBeenCalledTimes(2));
+  fireEvent.click(screen.getByRole("radio", { name: "Link only" }));
+  await waitFor(() => expect(planPreview).toHaveBeenCalledTimes(4));
+  expect(planPreview).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ mediaPolicy: "link_only" }));
+  fireEvent.click(screen.getByRole("button", { name: "Browse destination folder" }));
+  fireEvent.click(screen.getByRole("treeitem", { name: "Research" }));
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Select Folder" })).getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(planPreview).toHaveBeenCalledTimes(6));
+  fireEvent.click(screen.getByRole("button", { name: "Review batch manifest" }));
+  const review = await screen.findByRole("region", { name: "Save plan and results" });
+  expect(within(review).getByText("Research")).toBeVisible();
+  expect(planPreview).toHaveBeenCalledTimes(6);
+  expect(planPreview).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ folderPath: "Research", mediaPolicy: "link_only" }));
+});
+
+it("retries a failed background bulk plan when Save is clicked", async () => {
+  const service = signedInService();
+  const page = await service.fetchProfilePage("unused", null);
+  vi.mocked(service.fetchProfilePage).mockResolvedValue({ ...page, content: [page.content[0]!] });
+  const originalPlan = service.planPreview.bind(service);
+  const planPreview = vi.spyOn(service, "planPreview")
+    .mockRejectedValueOnce(new Error("Temporary local read failure"))
+    .mockImplementation(originalPlan);
+  render(<WorkbenchApp initialTab="bulk" service={service} />);
+  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
+  fireEvent.change(await screen.findByLabelText("Creator profile URL"), { target: { value: "https://youtube.com/@creator" } });
+  fireEvent.click(screen.getByRole("button", { name: "Fetch page" }));
+  await screen.findByRole("checkbox", { name: "Select Post A" });
+  await waitFor(() => expect(planPreview).toHaveBeenCalledTimes(1));
+  await screen.findByRole("alert");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select Post A" }));
+  fireEvent.click(screen.getByRole("button", { name: "Review batch manifest" }));
+  expect(await screen.findByRole("button", { name: "Save 1 notes to vault" })).toBeVisible();
+  expect(planPreview).toHaveBeenCalledTimes(2);
+});
+
 it("does not save a WeChat listing when fetching the full article fails", async () => {
   const service = signedInService(); const page = await service.fetchProfilePage("unused", null);
   vi.mocked(service.fetchProfilePage).mockResolvedValue({ ...page, content: [{ ...page.content[0]!, platform: "wechat_official_account", needSupplement: true, supplementUrl: "https://mp.weixin.qq.com/s/article", canonicalUrl: "https://mp.weixin.qq.com/s/article" }] });
   service.supplementContent = vi.fn(async () => { throw new Error("Article fetch failed"); });
   render(<WorkbenchApp initialTab="bulk" service={service} />);
-  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
   fireEvent.change(await screen.findByLabelText("Creator profile URL"), { target: { value: "https://mp.weixin.qq.com/s/article" } });
   fireEvent.click(screen.getByRole("button", { name: "Fetch page" }));
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select Post A" }));
@@ -2026,7 +2232,7 @@ it.each([
   });
   vi.mocked(service.savePrepared).mockResolvedValue({ successes: [], failures: [] });
   render(<WorkbenchApp initialTab="bulk" service={service} />);
-  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
   fireEvent.change(await screen.findByLabelText("Creator profile URL"), { target: { value: post.canonicalUrl } });
   fireEvent.click(screen.getByRole("button", { name: "Fetch page" }));
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select Post A" }));
@@ -2059,7 +2265,7 @@ it.each(["request failed", "still incomplete"] as const)("reports Xiaohongshu pr
     return { post, fetchId: page.fetchId, demo: false };
   });
   render(<WorkbenchApp initialTab="bulk" service={service} />);
-  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
   fireEvent.change(await screen.findByLabelText("Creator profile URL"), { target: { value: "https://www.xiaohongshu.com/user/profile/creator" } });
   fireEvent.click(screen.getByRole("button", { name: "Fetch page" }));
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select Winter driving tips" }));
@@ -2095,7 +2301,7 @@ it.each([
     .mockResolvedValue({ post: { ...post, needSupplement: false, text: "Full post details" }, fetchId: page.fetchId, demo: false });
   vi.mocked(service.savePrepared).mockResolvedValue({ successes: [], failures: [] });
   render(<WorkbenchApp initialTab="bulk" service={service} />);
-  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
   fireEvent.change(await screen.findByLabelText("Creator profile URL"), { target: { value: "https://www.xiaohongshu.com/user/profile/creator" } });
   fireEvent.click(screen.getByRole("button", { name: "Fetch page" }));
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select Post A" }));
@@ -2125,7 +2331,7 @@ it("starts a fresh Save draft after changing individual selections following a c
   const service = signedInService();
   vi.mocked(service.savePrepared).mockImplementation(async prepared => ({successes:prepared.map(({manifest}) => successfulSave(manifest)),failures:[]}));
   render(<WorkbenchApp initialTab="bulk" service={service} />);
-  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
   fireEvent.change(await screen.findByLabelText("Creator profile URL"), {target:{value:"https://youtube.com/@creator"}});
   fireEvent.click(screen.getByRole("button", {name:"Fetch page"}));
   fireEvent.click(await screen.findByRole("checkbox", {name:"Select Post A"}));
@@ -2145,7 +2351,7 @@ it("explains an empty post filter and restores the loaded rows without refetchin
   const service = signedInService();
   const fetchProfilePage = vi.spyOn(service, "fetchProfilePage");
   render(<WorkbenchApp initialTab="bulk" service={service} />);
-  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
   fireEvent.change(await screen.findByLabelText("Creator profile URL"), {target:{value:"https://youtube.com/@creator"}});
   fireEvent.click(screen.getByRole("button", {name:"Fetch page"}));
   await screen.findByRole("checkbox", {name:"Select Post A"});
@@ -2166,7 +2372,7 @@ it("filters previously saved content independently of a new-copy write action", 
   const original = service.planPreview;
   service.planPreview = vi.fn(async (preview, options) => ({...await original(preview,options), alreadySaved:preview.post.contentId === "post-a"}));
   render(<WorkbenchApp initialTab="bulk" service={service} />);
-  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
   fireEvent.change(await screen.findByLabelText("Creator profile URL"), {target:{value:"https://youtube.com/@creator"}});
   fireEvent.click(screen.getByRole("button", {name:"Fetch page"}));
   fireEvent.click(await screen.findByRole("button", {name:"Already saved"}));
@@ -2192,7 +2398,24 @@ it("keeps a completed partial row visibly partial while later batch rows are sav
   expect(screen.getByRole("progressbar",{name:"Downloaded attachments"})).toHaveAttribute("value","0");
 });
 
- it.each(["refresh_failed", "denied", "expired"] as const)("returns %s to the in-plugin login instead of device authorization", async reason => {
+it("shows the signed-out home after saved credentials expire and allows signing in from the header", async () => {
+  const service = signedInService();
+  service.authState = () => ({ status: "error", reason: "refresh_failed" });
+  service.restoreAuth = async () => ({ status: "error", reason: "refresh_failed" });
+  service.startSignIn = vi.fn();
+  render(<WorkbenchApp service={service} />);
+  const signIn = await screen.findByRole("button", { name: "Sign in / register" });
+  await waitFor(() => expect(signIn).toHaveTextContent("Log In"));
+  expect(screen.queryByText("Authorization could not be restored")).not.toBeInTheDocument();
+  expect(screen.queryByText("The previous code or session will not be reused.")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Start again" })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/^Password/)).not.toBeInTheDocument();
+  fireEvent.click(signIn);
+  expect(await screen.findByLabelText(/^Password/)).toBeVisible();
+  expect(service.startSignIn).not.toHaveBeenCalled();
+});
+
+ it.each(["denied", "expired"] as const)("returns %s to the in-plugin login instead of device authorization", async reason => {
   const service = signedInService();
   service.authState = () => ({ status: "error", reason });
   service.restoreAuth = async () => ({ status: "error", reason });
@@ -2384,7 +2607,7 @@ it.each([["youtube", "success"], ["bilibili", "success"], ["xiaohongshu", "succe
   });
   vi.mocked(service.savePrepared).mockResolvedValue({ successes: [], failures: [] });
   render(<WorkbenchApp initialTab="bulk" service={service} />);
-  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
   fireEvent.change(await screen.findByLabelText("Creator profile URL"), { target: { value: "https://example.com/creator" } });
   fireEvent.click(screen.getByRole("button", { name: "Fetch page" }));
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select Post A" }));
@@ -2433,7 +2656,7 @@ it("queues the first supplemented post while the next loads and retries only the
   });
 
   render(<WorkbenchApp initialTab="bulk" service={service} />);
-  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("· pro · 99/100"));
+  await waitFor(() => expect(screen.getByLabelText("Account status")).toHaveTextContent("pro · 99/100"));
   fireEvent.change(await screen.findByLabelText("Creator profile URL"), { target: { value: "https://youtube.com/@creator" } });
   fireEvent.click(screen.getByRole("button", { name: "Fetch page" }));
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select Post A" }));
@@ -2527,7 +2750,7 @@ it.each(['preview-cancel','switch-tab','unmount'] as const)('aborts the owning B
     return {successes:[],failures:entries.map(entry=>({preview:entry.preview,error:'Save cancelled.'}))};
   });
   const rendered=render(<WorkbenchApp initialTab="bulk" service={service} />);
-  await waitFor(()=>expect(screen.getByLabelText('Account status')).toHaveTextContent('· pro · 99/100'));
+  await waitFor(()=>expect(screen.getByLabelText('Account status')).toHaveTextContent('pro · 99/100'));
   fireEvent.change(screen.getByLabelText('Creator profile URL'),{target:{value:'https://youtube.com/@creator'}});
   fireEvent.click(screen.getByRole('button',{name:'Fetch page'}));
   fireEvent.click(await screen.findByRole('checkbox',{name:'Select Post A'}));

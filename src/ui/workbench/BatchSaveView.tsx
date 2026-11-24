@@ -51,9 +51,10 @@ export function BatchSaveView({entries,progress,result,saving,error,onBack,onSav
       const downloading = active && transfer?.downloading && !cancelling;
       const transferLabel = downloading ? attachmentDownloadLabel(transfer) : undefined;
       const downloadCount = saving && transfer && `Downloaded ${transfer.downloadedCount}/${transfer.attachmentCount}`;
-      const failedMedia=saved?.write.attachments.some(item=>item.status==='failed');
+      const failedMedia = saved?.write.attachments.filter(item => item.status === 'failed');
       const details=failure || failed ? userMessage(failure?.error ?? current, 'save')
-        : failedMedia ? 'Note saved. Some files couldn’t be saved. Retry the partial note.'
+        : failedMedia?.some(item => item.downloadFailureReason === 'network') ? t('save.mediaNetworkFailure')
+        : failedMedia?.length ? 'Note saved. Some files couldn’t be saved. Retry the partial note.'
         : manifest.action==='blocked' || manifest.partialReasons.length ? savePlanReason(manifest) : '';
       const path=manifest.notePath.split('/').slice(0,-1).join(' / ');
       const title = displayTitle ?? postDisplayTitle(preview.post);

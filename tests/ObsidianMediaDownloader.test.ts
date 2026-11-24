@@ -88,7 +88,7 @@ it("finishes a save as partial when the host media request never settles", async
   try {
     const send = vi.fn(() => new Promise<RequestUrlResponse>(() => {}));
     const download = new ObsidianMediaDownloader(100, send).download({ id: "v", kind: "video", sourceUrl: "https://cdn.example/v.mp4" });
-    const outcome = expect(download).rejects.toThrow("Media download timed out");
+    const outcome = expect(download).rejects.toMatchObject({ message: expect.stringContaining("Media download timed out"), reason: "network" });
     await vi.advanceTimersByTimeAsync(120_000);
     await outcome;
     expect(send).toHaveBeenCalledTimes(1);
@@ -152,6 +152,12 @@ describe("bounded 403 media recovery", () => {
   it.each([403,502])("stops after recovery HTTP %s", async status => {
     const send = vi.fn().mockResolvedValueOnce(response(403, 0)).mockResolvedValueOnce(response(status, 0));
     await expect(new ObsidianMediaDownloader(100, send, recoveryPolicy).download(media)).rejects.toMatchObject({ name: "MediaRecoveryError", status });
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+  it("preserves network failures during the fallback request", async () => {
+    const send = vi.fn().mockResolvedValueOnce(response(403, 0)).mockRejectedValueOnce(new Error("net::ERR_CONNECTION_RESET"));
+    await expect(new ObsidianMediaDownloader(100, send, recoveryPolicy).download(media))
+      .rejects.toMatchObject({ name: "MediaRecoveryError", kind: "retryable", reason: "network" });
     expect(send).toHaveBeenCalledTimes(2);
   });
   it.each(["application/json", "text/html"])('validates recovery content (%s)', async type => {

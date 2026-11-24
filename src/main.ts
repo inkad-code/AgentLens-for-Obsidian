@@ -24,6 +24,7 @@ import { AgentLensApiClient } from "./api/AgentLensApiClient";
 import { ObsidianVaultPort } from "./vault/ObsidianVaultPort";
 import { VaultWriter } from "./vault/VaultWriter";
 import { AgentLensWorkbenchService } from "./workbench/AgentLensWorkbenchService";
+import { ManualTrial, TrialDeviceStore } from "./workbench/ManualTrial";
 import { ObsidianMediaDownloader } from "./vault/ObsidianMediaDownloader";
 import apiTargets from "../api-targets.json";
 import { ConnectivityGate } from "./runtime/ConnectivityGate";
@@ -153,10 +154,10 @@ export default class AgentLensPlugin extends Plugin {
     const api = createApi(state.installationId);
     const verification = new HumanVerification(
       url => window.open(url, "_blank", "noopener,noreferrer"),
-      new URL(process.env.AGENTLENS_API_BASE_URL ?? apiTargets.production).origin
+      new URL(process.env.AGENTLENS_API_BASE_URL ?? apiTargets.production).origin,
+      api
 );
     this.register(() => verification.dispose());
-    let verificationHandlerRegistered = false;
     const auth = new AuthService(
       api,
       new ObsidianRefreshTokenPersistence(
@@ -166,10 +167,6 @@ export default class AgentLensPlugin extends Plugin {
       () => Date.now(),
       async signal => {
         if (this.stopped || signal.aborted) throw new Error("Human verification was cancelled.");
-        if (!verificationHandlerRegistered) {
-          this.registerObsidianProtocolHandler("agentlens-human-verification", params => verification.receive(params));
-          verificationHandlerRegistered = true;
-        }
         return verification.request(signal);
       }
 );
@@ -198,7 +195,10 @@ export default class AgentLensPlugin extends Plugin {
       createVaultWriter,
       undefined,
       new OperationStore(execution.operationNamespace),
-      executionTarget
+      executionTarget,
+      process.env.AGENTLENS_ANONYMOUS_TRIAL === "1"
+        ? new ManualTrial(api.trial, new TrialDeviceStore(process.env.AGENTLENS_API_BASE_URL ?? apiTargets.production), auth)
+        : undefined
     );
 
 
@@ -284,7 +284,7 @@ export default class AgentLensPlugin extends Plugin {
 
   openWorkbench(tab: WorkbenchTab, initialUrl?: string): void {
     if (this.openingWorkbench) return;
-    this.openingWorkbench = this.openWorkbenchWindow(SINGLE_FETCH_REVIEW && tab === "auto" ? "single" : tab, initialUrl)
+    this.openingWorkbench = this.openWorkbenchWindow(SINGLE_FETCH_REVIEW && (tab === "auto" || tab === "transcript") ? "single" : tab, initialUrl)
       .catch(() => { new Notice("Unable to open AgentLens window. Please try again."); })
       .finally(() => { this.openingWorkbench = undefined; });
   }

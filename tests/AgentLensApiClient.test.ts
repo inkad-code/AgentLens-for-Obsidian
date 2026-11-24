@@ -20,6 +20,30 @@ const IDENTITY = {
 };
 
 describe("AgentLensApiClient", () => {
+  it("reads the trial assignment and actual mode without sending an account session", async () => {
+    const trial = { remaining: 3, reserved: 0, settled: 0, accountLinked: false };
+    const transport = new FakeTransport([
+      { success: true, data: { enrollmentId: "real", mode: "real_trial", variant: "B", trial } },
+      { success: true, data: { enrollmentId: "example", mode: "curated_demo", variant: "A", trial: null } }
+    ]);
+    const client = new AgentLensApiClient(transport, IDENTITY);
+    const secret = "A".repeat(43);
+    await expect(client.trial.experience(secret)).resolves.toEqual({ enrollmentId: "real", mode: "B", trial });
+    await expect(client.trial.experience(secret)).resolves.toEqual({ enrollmentId: "example", mode: "A", trial: null });
+    expect(transport.requests[0]).toEqual({ path: "/v1/trials/obsidian/experience", method: "POST", trialCredential: secret });
+  });
+  it("binds verification polling and signup to this installation", async () => {
+    const pollToken = "B".repeat(43);
+    const transport = new FakeTransport([{pollToken, verificationUrl: "https://agentlens.example/plugin-verification?client=eagle#ticket=" + "A".repeat(43)}, {status:"verified"}, {token:"web-token"}]);
+    const api = new AgentLensApiClient(transport, IDENTITY);
+    expect((await api.startRegistrationVerification()).pollToken).toBe(pollToken);
+    expect(await api.pollRegistrationVerification(pollToken)).toEqual({status:"verified"});
+    expect(await api.authenticateEmail({email:"new@example.com",password:"fixture",name:"New",registrationPollToken:pollToken})).toBe("web-token");
+    expect(transport.requests.map(r => r.path)).toEqual(["/auth/plugin-registration/start","/auth/plugin-registration/poll","/auth/plugin-registration/signup"]);
+    expect(transport.requests.every(r => r.installationId === IDENTITY.installationId && r.method === "POST")).toBe(true);
+    expect(transport.requests[2]!.body).toEqual({email:"new@example.com",password:"fixture",name:"New",pollToken});
+  });
+
   it.each([undefined, "foreign-install", ""])("rejects foreign or unproven authentication identity %s", async installationId => {
     const response = { success: true, data: { status: "authorized", installationId,
       accessToken: "access", refreshToken: "refresh", accessTokenExpiresAt: "2026-08-20T01:00:00Z" } };

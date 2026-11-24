@@ -16,6 +16,7 @@ import { ImportTasks, type ImportTaskContext, type ImportTask } from "./ImportTa
 import { SINGLE_DEMO_LINK, BULK_DEMO_LINK } from "../core/demoLinks";
 import { SINGLE_FETCH_REVIEW, requireFullRelease } from "../core/releaseProfile";
 import { publicLinkFromText } from "../core/urls";
+import type { TranscriptApi, TranscriptIdentity, TranscriptReceipt, TranscriptScope } from "../api/transcript";
 import type { AutoFetchCapabilities, AccountSummary, ActivityDetail, ActivityExport, ActivityFilters, ActivityPage, CreatorParseResult, CreatorRecord, CreatorSchedulePreview, CreatorSettingsInput, FetchPage, SchedulerReconcileReason } from "../api/AgentLensApiClient";
 import type { AuthState } from "../auth/AuthService";
 import { AuthService } from "../auth/AuthService";
@@ -37,10 +38,19 @@ import type { NativeExecutionTarget } from "../runtime/NativeExecutionTarget";
 import { remoteScope } from "./identifiers";
 import { writeResult } from "./writeResults";
 import type { BillingPort } from "../api/billing";
+import type { ManualTrial } from "./ManualTrial";
 
 export type { BatchSaveResult, FollowCreatorInput, PreparedSave, PreviewResult, SaveResult, SchedulerRunResult, WriteOptions } from "./types";
 
 export const DEMO_URL = SINGLE_DEMO_LINK;
+
+function trialPreview(page: FetchPage): PreviewResult {
+  const post = page.content[0];
+  if (!post) throw new Error(page.trial?.outcome === "success_empty"
+    ? "The source returned no content. One trial use was recorded."
+    : "The source did not return a post that can be previewed.");
+  return { post, fetchId: page.fetchId, usage: page.usage, demo: false, trial: true };
+}
 
 export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
   readonly billing: BillingPort = {
@@ -48,11 +58,17 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
     dashboard: async () => (await this.billingApi()).dashboard(),
     createIntent: async selection => (await this.billingApi()).createIntent(selection),
     intent: async id => (await this.billingApi()).intent(id),
+    lifecyclePending: async () => (await this.billingApi()).lifecyclePending!(),
+    lifecycleActions: async () => (await this.billingApi()).lifecycleActions!(),
+    lifecycleState: async () => (await this.billingApi()).lifecycleState!(),
+    lifecycleCheckout: async (id, action) => (await this.billingApi()).lifecycleCheckout!(id, action),
+    lifecycleResume: async id => (await this.billingApi()).lifecycleResume!(id),
+    lifecycleReconcile: async id => (await this.billingApi()).lifecycleReconcile!(id),
     paymentOptions: async (plan, cycle) => (await this.billingApi()).paymentOptions!(plan, cycle),
     pendingCheckout: async () => (await this.billingApi()).pendingCheckout!(),
     checkout: async (id, method, confirmation) => (await this.billingApi()).checkout(id, method, confirmation),
     change: async (action, plan, cycle) => (await this.billingApi()).change(action, plan, cycle),
-    portal: async () => (await this.billingApi()).portal(),
+    portal: async lifecycle => (await this.billingApi()).portal(lifecycle),
     subscription: async action => (await this.billingApi()).subscription(action)
   };
 
@@ -159,7 +175,8 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
     }) => VaultWriter) | undefined,
     private readonly requests: RequestCoordinator = new RequestCoordinator(),
     private readonly indexedOperations?: OperationStore,
-    private readonly executionTarget?: () => Promise<NativeExecutionTarget | undefined>
+    private readonly executionTarget?: () => Promise<NativeExecutionTarget | undefined>,
+    private readonly manualTrial?: ManualTrial
   ) {
     this.importTaskJournal = new ImportTasks(stateStore);
 
@@ -558,6 +575,69 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
     this.vaultWriter = writer;
   }
 
+  async trialStatus() { return this.manualTrial?.status(); }
+
+  startTrial() {
+    if (!this.manualTrial) throw new Error("The trial is unavailable.");
+    return this.manualTrial.start();
+  }
+
+  async linkTrial() { await this.manualTrial?.link(); }
+
+  async recoverTrialSingle() {
+    if (!this.manualTrial) throw new Error("The trial is unavailable.");
+    const { url, page } = await this.manualTrial.recover("single_post");
+    return { url, preview: trialPreview(page) };
+  }
+
+  recoverTrialProfile() {
+    if (!this.manualTrial) throw new Error("The trial is unavailable.");
+    return this.manualTrial.recover("profile_page");
+  }
+
+  async claimTrialSavePrompt() { return (await this.manualTrial?.claimSavePrompt()) === true; }
+
+  startTranscript(sourceUrl: string, key: string, scope: TranscriptScope): Promise<TranscriptReceipt> {
+    const url = publicLinkFromText(sourceUrl);
+    requirePublicLink(url);
+    return this.withTranscriptIdentity(scope, true, (api, identity) => api.start(identity, key, url));
+  }
+
+  latestTranscript(scope: TranscriptScope): Promise<TranscriptReceipt | null> {
+    return this.withTranscriptIdentity(scope, false, (api, identity) => api.latest(identity));
+  }
+
+  recoverTranscript(scope: TranscriptScope, key: string): Promise<TranscriptReceipt> {
+    return this.withTranscriptIdentity(scope, false, (api, identity) => api.recover(identity, key));
+  }
+
+  private async withTranscriptIdentity<T extends TranscriptReceipt | null>(
+    scope: TranscriptScope, newRequest: boolean, action: (api: TranscriptApi, identity: TranscriptIdentity) => Promise<T>
+  ): Promise<T> {
+    requireFullRelease();
+    const api = this.api.transcript;
+    if (!api) throw new Error("Transcript is unavailable in this version.");
+    const epoch = this.auth.sessionEpoch();
+    const token = await this.auth.accessToken() ?? undefined;
+    let identity: TranscriptIdentity;
+    if (scope === "account") {
+      if (!token) throw new Error("Sign in to AgentLens before continuing.");
+      if (newRequest) await this.requireSupportedVersion(token);
+      identity = { scope, token };
+    } else {
+      if (!this.manualTrial) throw new Error("Start the trial before parsing a link.");
+      if (newRequest && token) throw new Error("Use your AgentLens account for new requests.");
+      const credential = await this.manualTrial.transcriptCredential(newRequest);
+      if (token) await this.manualTrial.link();
+      identity = { scope, credential, token };
+    }
+    if (epoch !== this.auth.sessionEpoch()) throw new Error("The account changed. Restore the original transcript.");
+    const receipt = await action(api, identity);
+    if (receipt?.balance && this.manualTrial) await this.manualTrial.rememberTranscriptBalance(receipt.balance);
+    if (epoch !== this.auth.sessionEpoch()) throw new Error("The account changed. Restore the original transcript.");
+    return receipt;
+  }
+
   async previewSingle(url: string): Promise<PreviewResult> {
     url = publicLinkFromText(url);
     const epoch = this.auth.sessionEpoch();
@@ -570,6 +650,10 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
 
   private async previewSingleOnce(url: string): Promise<PreviewResult> {
     const token = await this.auth.accessToken();
+    if (!token && this.manualTrial && (await this.manualTrial.status()).mode === "B") {
+      requirePublicLink(url);
+      return trialPreview(await this.manualTrial.fetch({ mode: "single_post", url }));
+    }
     if (!token && url === SINGLE_DEMO_LINK) {
       if (!this.api.demoFetch) throw new Error("Demo is unavailable. Please update the plugin.");
       const result = await this.api.demoFetch("single_post");
@@ -615,7 +699,7 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
   }
 
   async supplementContent(preview: PreviewResult): Promise<PreviewResult> {
-    if (preview.demo || preview.post.needSupplement !== true) return preview;
+    if (preview.demo || preview.trial || preview.post.needSupplement !== true) return preview;
     if (preview.historyRestore) throw new Error("This saved post is incomplete. History restoration never requests new details.");
     if (!preview.fetchId || !preview.post.supplementUrl) throw new Error("The source did not provide a post URL for supplementation.");
     const token = await this.auth.accessToken();
@@ -642,6 +726,10 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
 
   private async fetchProfilePageOnce(url: string, cursor: string | null): Promise<FetchPage> {
     const token = await this.auth.accessToken();
+    if (!token && this.manualTrial && (await this.manualTrial.status()).mode === "B") {
+      requirePublicLink(url);
+      return this.manualTrial.fetch({ mode: "profile_page", url, ...(cursor ? { cursor } : {}) });
+    }
     if (!token && url.toLowerCase().replace(/\/$/, "") === BULK_DEMO_LINK.toLowerCase().replace(/\/$/, "")) {
       if (!this.api.demoFetch) throw new Error("Demo is unavailable. Please update the plugin.");
       return this.api.demoFetch("profile_page", cursor);
@@ -706,7 +794,7 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
   private async saveManual(preview: PreviewResult, manifest: NoteWriteManifest, signal?: AbortSignal, onTransfer?: (progress: SaveTransferProgress) => void): Promise<SaveResult> {
     const prepare = async (resolved: NoteWriteManifest) => {
       manifest = resolved;
-      const callback = preview.demo || !preview.fetchId ? null : {
+      const callback = preview.demo || preview.trial || !preview.fetchId ? null : {
         request: {
           fetchId: preview.fetchId,
           runId: `single-save-${this.createId()}`,
@@ -1052,9 +1140,9 @@ export class AgentLensWorkbenchService implements AgentLensWorkbenchPort {
             } catch (initialError) {
               signal?.throwIfAborted();
               // WRITE-003 retains the mobile refresh policy; desktop follows WRITE-001.
-              if (preview.historyRestore || this.mediaDownloader?.refreshOnFailure === false || initialError instanceof MediaRecoveryError) throw initialError;
+              if (preview.transcript || preview.historyRestore || this.mediaDownloader?.refreshOnFailure === false || initialError instanceof MediaRecoveryError) throw initialError;
               const token = await this.auth.accessToken();
-              if (!token || preview.demo) throw initialError;
+              if (!token || preview.demo || preview.trial) throw initialError;
               const refreshed = await this.api.refreshMedia(
                 token,
                 preview.post.contentId,

@@ -58,8 +58,9 @@ it("rejects over-limit headers and counts unknown-size streams", async () => {
  await expect(new DesktopMediaDownloader(2048, undefined, undefined, async () => "DIRECT").download(media("/unknown"))).rejects.toThrow("limit");
 });
 it("rejects truncated responses and error documents", async () => {
- await expect(new DesktopMediaDownloader(undefined, undefined, undefined, async () => "DIRECT").download(media("/partial"))).rejects.toThrow();
- await expect(new DesktopMediaDownloader(undefined, undefined, undefined, async () => "DIRECT").download(media("/html"))).rejects.toThrow("document");
+ const downloader = new DesktopMediaDownloader(undefined, undefined, undefined, async () => "DIRECT");
+ await expect(downloader.download(media("/partial"))).rejects.toMatchObject({ kind: "retryable", reason: "network" });
+ await expect(downloader.download(media("/html"))).rejects.toThrow("document");
 });
 it("follows redirects and preserves the downloaded bytes", async () => {
  const f=await new DesktopMediaDownloader(undefined, undefined, undefined, async () => "DIRECT").download(media("/redirect"));
@@ -71,7 +72,8 @@ it("aborts idle bodies and releases slots", async () => {
  const promise=new DesktopMediaDownloader(undefined, undefined, undefined, async () => "DIRECT").download(media("/slow"),controller.signal);
  setTimeout(()=>controller.abort(),30);
  await expect(promise).rejects.toThrow("canceled");
- await expect(new DesktopMediaDownloader(undefined,30, undefined, async () => "DIRECT").download(media("/slow"))).rejects.toThrow("timed out");
+ await expect(new DesktopMediaDownloader(undefined,30, undefined, async () => "DIRECT").download(media("/slow")))
+   .rejects.toMatchObject({ message: "Media download timed out.", reason: "network" });
  const after=(await readdir(tmpdir())).filter(x=>x.startsWith("agentlens-obsidian-media-"));
  // Other real-host downloads may remove their own pre-existing directories during this test.
  expect(after.filter(name => !before.includes(name))).toEqual([]);
@@ -104,7 +106,7 @@ it('streams through the selected proxy and resolves again on redirect', async ()
 });
 it('does not fall back to a working direct origin when the configured proxy is unavailable', async()=>{
  const downloader=new DesktopMediaDownloader(undefined,2000,undefined,async()=> 'PROXY 127.0.0.1:1; DIRECT');
- await expect(downloader.download(media('/ok'))).rejects.toThrow();
+ await expect(downloader.download(media('/ok'))).rejects.toMatchObject({ kind: 'retryable', reason: 'network' });
 });
 it('cancels while resolving system proxy settings',async()=>{
  const downloader=new DesktopMediaDownloader(undefined,30,undefined,()=>new Promise(()=>{}));

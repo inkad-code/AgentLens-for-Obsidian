@@ -1,47 +1,59 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { useBilling } from "../src/ui/workbench/useBilling";
-import { AgentLensError } from "../src/core/errors";
 import type { BillingPort, PendingCheckout } from "../src/api/billing";
 
-function fixture() {
-  const details = { oldOrderId: "old-order", intentId: "new-intent", plan: "ultra", billingCycle: "yearly", paymentMethod: "wallet", amount: 69.9, currency: "USD", requestKey: "intent:new-intent" };
-  const error = new AgentLensError("unknown", "Confirm replacement", false, 409, undefined, undefined, undefined, "CHECKOUT_REPLACEMENT_REQUIRED", details);
+function fixture(replacing = false) {
+  const action = {plan:"ULTRA", mode:"OY", action:"NEW", enabled:true, reason:"", stateVersion:5, amountMinor:6990,
+    description:"US$69.9 for one year. No automatic renewal.", ...(replacing ? {replacesIntentId:"old-order"} : {})} as const;
   const billing: BillingPort = {
     plans: vi.fn(async () => []), dashboard: vi.fn(async () => ({ plan: "basic" as const, billingCycle: "monthly" as const, subscriptionStatus: "active", scheduledPlan: null, scheduledBillingCycle: null, scheduledEffectiveAt: null, checkoutStatus: null, fetchReason: null })),
     createIntent: vi.fn(async () => ({ id: "new-intent", displayedAmount: 69.9, currency: "USD", checkoutStatus: "not_started" })),
     intent: vi.fn(async () => ({ id: "new-intent", displayedAmount: 69.9, currency: "USD", checkoutStatus: "pending" })),
     paymentOptions: vi.fn(async () => ({ walletAvailable: true })),
-    checkout: vi.fn().mockRejectedValueOnce(error).mockRejectedValue(new Error("Lost provider response")),
+    lifecycleActions: vi.fn(async () => [action]),
+    lifecycleCheckout: vi.fn().mockRejectedValue(new Error("Lost provider response")),
+    lifecycleResume: vi.fn().mockRejectedValue(new Error("Still reconciling")),
+    checkout: vi.fn().mockRejectedValue(new Error("Lost provider response")),
     change: vi.fn(), portal: vi.fn(), subscription: vi.fn()
   };
-  return { billing, details };
+  return { billing, action };
 }
 const selection = { itemType: "subscription", plan: "ultra", billingCycle: "yearly" } as const;
 describe("independent checkout replacement", () => {
   it("requires confirmation, preserves its exact retry identity and does not start a second intent", async () => {
-    const { billing, details } = fixture();
+    const { billing, action } = fixture(true);
     vi.spyOn(window, "open").mockReturnValue({ opener: null, closed: false, location: { replace: vi.fn() }, close: vi.fn() } as unknown as Window);
     const { result } = renderHook(() => useBilling(billing, "account"));
-    await waitFor(() => expect(result.current.dashboard).not.toBeNull());
+    await waitFor(() => expect(result.current.ready).toBe(true));
     await act(() => result.current.prepare(selection, "wallet"));
-    expect(result.current.replacementDescription).toContain("US$69.9 for one year");
-    expect(result.current.replacementDescription).toContain("No automatic renewal");
-    expect(billing.checkout).toHaveBeenCalledTimes(1);
+    expect(result.current.confirmation).toBe("replace-checkout");
+    expect(result.current.replacement?.action.description).toContain("US$69.9 for one year");
+    expect(result.current.replacement?.action.description).toContain("No automatic renewal");
+    expect(billing.createIntent).not.toHaveBeenCalled();
+    expect(billing.lifecycleCheckout).not.toHaveBeenCalled();
     await act(() => result.current.confirm());
-    expect(billing.checkout).toHaveBeenLastCalledWith("new-intent", "wallet", { requestKey: details.requestKey, replacesOrderId: "old-order", confirmed: true, confirmedAmount: 69.9, currency: "USD" });
+    expect(billing.lifecycleCheckout).toHaveBeenLastCalledWith("new-intent", action);
+    expect(result.current.pending?.intentId).toBe("new-intent");
     await act(() => result.current.reopen());
-    expect(billing.checkout).toHaveBeenCalledTimes(3);
+    expect(billing.lifecycleCheckout).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(billing.lifecycleCheckout!).mock.calls).toEqual([["new-intent",action],["new-intent",action]]);
     expect(billing.createIntent).toHaveBeenCalledTimes(1);
+    expect(billing.checkout).not.toHaveBeenCalled();
   });
   it("canceling a replacement does not send the closure confirmation", async () => {
-    const { billing } = fixture();
+    const { billing } = fixture(true);
     vi.spyOn(window, "open").mockReturnValue({ opener: null, close: vi.fn() } as unknown as Window);
     const { result } = renderHook(() => useBilling(billing, "account"));
-    await waitFor(() => expect(result.current.dashboard).not.toBeNull());
+    await waitFor(() => expect(result.current.ready).toBe(true));
     await act(() => result.current.prepare(selection, "wallet"));
     act(() => result.current.cancel());
-    expect(result.current.confirmation).toBeNull();expect(billing.checkout).toHaveBeenCalledTimes(1);expect(billing.subscription).not.toHaveBeenCalled();
+    expect(result.current.confirmation).toBeNull();
+    expect(result.current.replacement).toBeNull();
+    expect(billing.createIntent).not.toHaveBeenCalled();
+    expect(billing.lifecycleCheckout).not.toHaveBeenCalled();
+    expect(billing.checkout).not.toHaveBeenCalled();
+    expect(billing.subscription).not.toHaveBeenCalled();
   });
   it("recovers a persisted close/create after a fresh client instance without creating another intent", async () => {
     const { billing } = fixture();
@@ -66,33 +78,50 @@ describe("independent checkout replacement", () => {
 
   it("returns to the original unknown operation when another selection is blocked", async () => {
     const { billing } = fixture();
-    billing.pendingCheckout = vi.fn().mockResolvedValueOnce(null).mockResolvedValue({ intentId: "original-intent", plan: "pro", billingCycle: "monthly", paymentMethod: "card", amount: 2.9, currency: "USD", requestKey: "original-key" });
-    vi.mocked(billing.checkout).mockReset().mockRejectedValue(new AgentLensError("unknown", "Reconcile original", false, 409, undefined, undefined, undefined, "PAYMENT_PENDING"));
+    billing.lifecyclePending = vi.fn().mockResolvedValue({intentId:"original-intent",plan:"pro",billingCycle:"monthly",mode:"AM",amount:2.9,currency:"USD",state:"PROVIDER_UNKNOWN"});
+    billing.lifecycleActions = vi.fn().mockResolvedValue([{plan:"ULTRA",mode:"OY",action:"BLOCKED",enabled:false,reason:"PAYMENT_PENDING",stateVersion:5}]);
     vi.spyOn(window, "open").mockReturnValue({ opener: null, close: vi.fn() } as unknown as Window);
     const { result } = renderHook(() => useBilling(billing, "account"));
-    await waitFor(() => expect(result.current.dashboard).not.toBeNull());
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    expect(result.current.pending?.intentId).toBe("original-intent");
     await act(() => result.current.prepare(selection, "wallet"));
     expect(result.current.pending?.intentId).toBe("original-intent");
     await act(() => result.current.reopen());
-    expect(billing.checkout).toHaveBeenLastCalledWith("original-intent", "card", { requestKey: "original-key" });
-    expect(billing.createIntent).toHaveBeenCalledTimes(1);
+    expect(billing.lifecycleResume).toHaveBeenLastCalledWith("original-intent");
+    expect(billing.createIntent).not.toHaveBeenCalled();
+    expect(billing.lifecycleCheckout).not.toHaveBeenCalled();
+    expect(billing.checkout).not.toHaveBeenCalled();
   });
 
   it("does not open a checkout after switching accounts while its response is pending", async () => {
     const { billing } = fixture();
-    let finish!: (value: { checkoutUrl: string; status: string }) => void;
-    vi.mocked(billing.checkout).mockReset().mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    let finish!: (value: { checkoutUrl: string; state: string }) => void;
+    vi.mocked(billing.lifecycleCheckout!).mockReset().mockImplementation(() => new Promise(resolve => { finish = resolve; }));
     const replace = vi.fn();
     const open = vi.spyOn(window, "open").mockReturnValue({ opener: null, closed: false, location: { replace }, close: vi.fn() } as unknown as Window);
     const { result, rerender } = renderHook(({ account }) => useBilling(billing, account), { initialProps: { account: "old-account" } });
-    await waitFor(() => expect(result.current.dashboard).not.toBeNull());
+    await waitFor(() => expect(result.current.ready).toBe(true));
     let pending!: Promise<void>;
     act(() => { pending = result.current.prepare(selection, "wallet"); });
-    await waitFor(() => expect(billing.checkout).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(billing.lifecycleCheckout).toHaveBeenCalledTimes(1));
     const callsBefore = open.mock.calls.length;
     rerender({ account: "new-account" });
-    await act(async () => { finish({ checkoutUrl: "https://checkout.stripe.com/c/old-account", status: "pending" }); await pending; });
+    await act(async () => { finish({ checkoutUrl: "https://checkout.stripe.com/c/old-account", state: "CHECKOUT_OPEN" }); await pending; });
     expect(open.mock.calls.length).toBe(callsBefore); expect(replace).not.toHaveBeenCalled();
+    expect(result.current.pending).toBeNull();
+    expect(billing.checkout).not.toHaveBeenCalled();
+  });
+
+  it.each([null, []])("does not fall back to legacy checkout without an authorized lifecycle action (%j)", async actions => {
+    const {billing} = fixture();
+    billing.lifecycleActions = vi.fn().mockResolvedValue(actions);
+    const {result} = renderHook(() => useBilling(billing, "blocked-account"));
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    await act(() => result.current.prepare(selection,"wallet"));
+    expect(result.current.error).toMatch(/unavailable/);
+    expect(billing.createIntent).not.toHaveBeenCalled();
+    expect(billing.lifecycleCheckout).not.toHaveBeenCalled();
+    expect(billing.checkout).not.toHaveBeenCalled();
   });
 
 });

@@ -62,6 +62,7 @@ describe("Single Fetch review profile", () => {
   it.each(["single", "bulk", "auto"] as const)("preserves manual workflows for %s and hides only top navigation and Auto/Activity", initialTab => {
     const { container } = render(<WorkbenchApp initialTab={initialTab} />);
     expect(screen.getByRole("tab", { name: initialTab === "bulk" ? "Bulk Fetch" : "Single Fetch" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("tab", { name: "Transcript" })).toBeNull();
     expect(screen.queryByRole("navigation", { name: "Main navigation", hidden: true })).toBeNull();
     expect(screen.getByRole("tablist", { name: "AgentLens workflows" })).toBeVisible();
     expect(container.querySelectorAll('[role="tabpanel"]')).toHaveLength(2);

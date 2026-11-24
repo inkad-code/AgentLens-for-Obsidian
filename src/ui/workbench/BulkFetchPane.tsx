@@ -11,7 +11,7 @@ import { WorkbenchDialog } from "./WorkbenchDialog";
 import { BatchSaveView, type BatchSaveEntry } from "./BatchSaveView";
 import { bulkAssets, bulkCheckboxSelected } from "./bulkAssets";
 import { FolderField } from "./FolderField";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { NoteWriteManifest } from "../../vault/VaultWriter";
 import { plannedDownloadCount } from "./savePresentation";
 import type { BatchSaveResult, PreviewResult, SaveTransferProgress } from "../../workbench/types";
@@ -31,7 +31,7 @@ import { useI18n } from "../../i18n/I18nProvider";
 type BulkWriteOptions = { folderPath: string; mediaPolicy: MediaPolicy; templateId: TemplateId; saveAsCopy: true };
 
 const listingOnlyPreviewPlatforms = new Set(["youtube", "bilibili"]);
-const inlineSupplementPlatforms = new Set(["xiaohongshu", "weibo"]);
+const inlineSupplementPlatforms = new Set(["xiaohongshu", "weibo", "x"]);
 
 export function BulkFetchPane({
   onDemoSaved,
@@ -39,6 +39,10 @@ export function BulkFetchPane({
   onStartFree,
   service,
   signedIn,
+  trial,
+  onTrialChanged,
+  fetchBlocked = false,
+  onManagePlan,
   capabilities,
   onOpenNote,
   defaults,
@@ -50,6 +54,10 @@ export function BulkFetchPane({
 }: {
   service?: BulkWorkbenchPort | undefined;
   signedIn: boolean;
+  trial?: import("../../workbench/ManualTrial").TrialUi | undefined;
+  onTrialChanged?: (() => void) | undefined;
+  fetchBlocked?: boolean;
+  onManagePlan?: (() => void) | undefined;
   onDemoSaved?: (()=>void) | undefined;
   onRequestSignUp?: (()=>void) | undefined;
   onStartFree?: (()=>void) | undefined;
@@ -63,6 +71,8 @@ export function BulkFetchPane({
   onSaveViewChange?: ((open: boolean) => void) | undefined;
 }) {
   const { t } = useI18n();
+  const parsingBlocked = signedIn && fetchBlocked;
+  const editable = signedIn || trial?.mode === "B" && !trial.balance?.accountLinked;
   const [saveViewOpen,setSaveViewOpen]=useState(false);
   useEffect(() => { if (!saveStarted.current) savePreparation.current++; setSaveViewOpen(false); }, [navigationVersion]);
   const [saving,setSaving]=useState(false);
@@ -74,7 +84,7 @@ export function BulkFetchPane({
   const saveStarted = useRef(false);
   const savePreparation = useRef(0);
   useEffect(()=>onSaveViewChange?.(saveViewOpen),[saveViewOpen,onSaveViewChange]);
-  const session = useRef(new BulkSession());
+  const session = useRef(new BulkSession({ demo: !editable }));
   const profileInputRef = useRef<HTMLInputElement>(null);
   const [profileUrl, setProfileUrl] = useState("");
   const [filter, setFilter] = useState("");
@@ -102,6 +112,11 @@ export function BulkFetchPane({
   const [failedCursor, setFailedCursor] = useState<string | null>(null);
   const bulkSourceRevision = useRef(0);
   const bulkDraftRevision = useRef(0);
+  const sourceContext = useRef({ signedIn, editable, service, accountId: capabilities?.accountId });
+  // A plan belongs to one list snapshot and one set of destination options.
+  // Share pending work too, so Save does not start a second folder scan.
+  const planCache = useMemo(() => new Map<PreviewResult, Promise<NoteWriteManifest>>(),
+    [service, session.current, folderPath, mediaPolicy, templateId]);
   useEffect(() => () => { saveController.current?.abort(); savePreparation.current++; session.current.reset(); }, []);
   const rows = session.current.rows();
   const nextCursor = session.current.cursor();
@@ -138,11 +153,16 @@ export function BulkFetchPane({
   useEffect(() => onDraftChange(rows.length > 0 && (!result || result.failures.length > 0 || result.successes.some(saved => saved.write.ledger.completion === "partial"))), [rows.length, result, onDraftChange]);
 
   useEffect(() => {
+    const previous = sourceContext.current;
+    const accountId = capabilities?.accountId;
+    sourceContext.current = { signedIn, editable, service, accountId };
+    if (previous.signedIn === signedIn && previous.editable === editable && previous.service === service
+        && (previous.accountId === accountId || signedIn && previous.accountId === undefined)) return;
     savePreparation.current++;
     saveController.current?.abort();
     bulkSourceRevision.current += 1;
     bulkDraftRevision.current += 1;
-    session.current = new BulkSession();
+    session.current = new BulkSession({ demo: !editable });
     setPrepared([]);
     setResult(null);
     setSaveViewOpen(false);
@@ -153,10 +173,21 @@ export function BulkFetchPane({
     setDetailErrors(new Map());
     setFailedCursor(null);
     setRevision(value => value + 1);
-  }, [signedIn, service, capabilities?.accountId]);
+  }, [signedIn, editable, service, capabilities?.accountId]);
 
   function globalOptions(): BulkWriteOptions {
     return { folderPath, mediaPolicy, templateId, saveAsCopy: true };
+  }
+
+  function cachedPlan(preview: PreviewResult): Promise<NoteWriteManifest> {
+    const existing = planCache.get(preview);
+    if (existing) return existing;
+    const pending = service!.planPreview(preview, globalOptions()).catch(caught => {
+      if (planCache.get(preview) === pending) planCache.delete(preview);
+      throw caught;
+    });
+    planCache.set(preview, pending);
+    return pending;
   }
 
   useEffect(() => {
@@ -167,7 +198,7 @@ export function BulkFetchPane({
     let cancelled = false;
     void Promise.all(rows.map(async (preview) => [
       contentKey(preview.post),
-      { preview, manifest: await service.planPreview(preview, globalOptions()) }
+      { preview, manifest: await cachedPlan(preview) }
     ] as const)).then(
       (entries) => { if (!cancelled) setRowPlans(Object.fromEntries(entries)); },
       (caught) => { if (!cancelled) setError(message(caught)); }
@@ -177,12 +208,14 @@ export function BulkFetchPane({
 
   async function loadFirst(event: SyntheticEvent) {
     event.preventDefault();
-    if (!service || (signedIn && !profileUrl.trim())) return;
+    if (parsingBlocked) { onManagePlan?.(); return; }
+    if (!service || (editable && !profileUrl.trim())) return;
+    if (!signedIn && trial?.balance?.remaining === 0) { onRequestSignUp?.(); return; }
     const requestRevision = bulkSourceRevision.current + 1;
     bulkSourceRevision.current = requestRevision;
     bulkDraftRevision.current += 1;
-    const requestedUrl = signedIn ? profileUrl.trim() : BULK_DEMO_LINK;
-    const targetSession = new BulkSession();
+    const requestedUrl = editable ? profileUrl.trim() : BULK_DEMO_LINK;
+    const targetSession = new BulkSession({ demo: !editable });
     session.current = targetSession;
     setBusy(true);
     setError(null);
@@ -195,30 +228,35 @@ export function BulkFetchPane({
     setMobileDetailOpen(false);
     setRevision((value) => value + 1);
     try {
-      await targetSession.load(null, (cursor) => service.fetchProfilePage(requestedUrl, cursor));
+      const page = await targetSession.load(null, (cursor) => service.fetchProfilePage(requestedUrl, cursor));
       if (requestRevision !== bulkSourceRevision.current || session.current !== targetSession) return;
+      if (page.trial?.outcome === "success_empty") setError("The source returned no posts. One trial use was recorded.");
       setFailedCursor(null);
       setRevision((value) => value + 1);
     } catch (caught) {
       if (requestRevision === bulkSourceRevision.current && session.current === targetSession) setError(message(caught));
     } finally {
       if (signedIn) onAccountChanged?.();
+      onTrialChanged?.();
       if (requestRevision === bulkSourceRevision.current && session.current === targetSession) { setBusy(false); setLoadingMore(false); }
     }
   }
 
   async function loadMore() {
+    if (parsingBlocked) { onManagePlan?.(); return; }
     if (!service || busy || !session.current.cursor()) return;
+    if (!signedIn && trial?.balance?.remaining === 0) { onRequestSignUp?.(); return; }
     const requestRevision = bulkSourceRevision.current;
-    const requestedUrl = signedIn ? profileUrl.trim() : BULK_DEMO_LINK;
+    const requestedUrl = editable ? profileUrl.trim() : BULK_DEMO_LINK;
     const targetSession = session.current;
     const cursor = targetSession.cursor();
     setLoadingMore(true);
     setBusy(true);
     setError(null);
     try {
-      await targetSession.load(cursor, (nextCursor) => service.fetchProfilePage(requestedUrl, nextCursor));
+      const page = await targetSession.load(cursor, (nextCursor) => service.fetchProfilePage(requestedUrl, nextCursor));
       if (requestRevision !== bulkSourceRevision.current || session.current !== targetSession) return;
+      if (page.trial?.outcome === "success_empty") setError("The source returned no posts. One trial use was recorded.");
       setFailedCursor(null);
       setRevision((value) => value + 1);
     } catch (caught) {
@@ -228,12 +266,38 @@ export function BulkFetchPane({
       }
     } finally {
       if (signedIn) onAccountChanged?.();
+      onTrialChanged?.();
       if (requestRevision === bulkSourceRevision.current && session.current === targetSession) { setBusy(false); setLoadingMore(false); }
     }
   }
 
+  async function recoverTrial() {
+    if (!service?.recoverTrialProfile || busy || saving) return;
+    const requestRevision = bulkSourceRevision.current;
+    setBusy(true);
+    setError(null);
+    try {
+      const { url, page, pages } = await service.recoverTrialProfile();
+      if (requestRevision !== bulkSourceRevision.current) return;
+      const next = new BulkSession();
+      for (const saved of pages) {
+        await next.load(next.cursor(), () => Promise.resolve(saved));
+      }
+      if (requestRevision !== bulkSourceRevision.current) return;
+      changeProfileUrl(url);
+      session.current = next;
+      setRevision(value => value + 1);
+      if (page.trial?.outcome === "success_empty") setError("The original request returned no posts.");
+    } catch (caught) {
+      if (requestRevision === bulkSourceRevision.current) setError(message(caught));
+    } finally {
+      onTrialChanged?.();
+      if (requestRevision === bulkSourceRevision.current) setBusy(false);
+    }
+  }
+
   async function fetchArticleDetails(preview: PreviewResult) {
-    if (!service) return;
+    if (!service || preview.demo || preview.trial) return;
     const target = session.current;
     setError(null);
     setDetailErrors(current => {
@@ -290,9 +354,9 @@ export function BulkFetchPane({
           setError(t("bulk.saveDetailsUnavailable", { title: postListTitle(post) }));
           return;
         }
-        const preview = signedIn ? selected : { ...selected, demo: true };
+        const preview = selected;
         if (requestRevision !== bulkDraftRevision.current || session.current !== targetSession) return;
-        nextPrepared.push({ preview, manifest: await service.planPreview(preview, globalOptions()), displayTitle: postListTitle(preview.post) });
+        nextPrepared.push({ preview, manifest: await cachedPlan(preview), displayTitle: postListTitle(preview.post) });
         if (requestRevision !== bulkDraftRevision.current || session.current !== targetSession) return;
       }
       setRevision(value => value + 1);
@@ -320,7 +384,7 @@ export function BulkFetchPane({
       && requestRevision === bulkDraftRevision.current && session.current === targetSession;
     const options = globalOptions();
     const needsDetails = ({ preview }: BatchSaveEntry) =>
-      signedIn && preview.post.needSupplement === true && options.mediaPolicy !== "link_only";
+      signedIn && !preview.trial && preview.post.needSupplement === true && options.mediaPolicy !== "link_only";
     const updateProgress = (key: string, status: string) => {
       if (isCurrent()) setProgress(current => ({ ...current, [key]: status }));
     };
@@ -403,8 +467,14 @@ export function BulkFetchPane({
       await Promise.all(writes);
       if (!isCurrent()) return;
       setResult(saved);
+      planCache.clear();
       setRevision(value => value + 1);
-      if (!signal.aborted && !signedIn && saved.successes.length > 0) (onDemoSaved ?? onRequestSignUp)?.();
+      if (!signal.aborted && !signedIn && saved.successes.length > 0) {
+        const isTrial = entries.some(entry => entry.preview.trial);
+        const firstTrialSave = isTrial && saved.successes.some(row => row.write.ledger.physicalStatus === "active")
+          && await service.claimTrialSavePrompt?.().catch(() => false);
+        if ((!isTrial || firstTrialSave) && isCurrent()) (onDemoSaved ?? onRequestSignUp)?.();
+      }
     } finally {
       if (saveController.current === controller) { saveController.current = undefined; setCancelling(false); }
       saveInFlight.current = false;
@@ -468,12 +538,14 @@ export function BulkFetchPane({
       <form className="agentlens-bulk-toolbar" onSubmit={(event) => void loadFirst(event)}>
             <div className="agentlens-url-bar">
             <label className="agentlens-sr-only" htmlFor="agentlens-profile-url">Creator profile URL</label>
-            <input ref={profileInputRef} id="agentlens-profile-url" type="text" inputMode="url" required placeholder="Paste a creator profile URL…" value={signedIn ? profileUrl : BULK_DEMO_LINK} readOnly={!signedIn} onPaste={event => { if (!signedIn) { event.preventDefault(); onRequestSignUp?.(); } }} onKeyDown={event => { if (!signedIn && event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) { event.preventDefault(); onRequestSignUp?.(); } }} onChange={(event) => changeProfileUrl(publicLinkFromText(event.currentTarget.value))} />
+            <input ref={profileInputRef} id="agentlens-profile-url" type="text" inputMode="url" required placeholder="Paste a creator profile URL…" value={editable ? profileUrl : BULK_DEMO_LINK} readOnly={!editable} onPaste={event => { if (!editable) { event.preventDefault(); onRequestSignUp?.(); } }} onKeyDown={event => { if (!editable && event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) { event.preventDefault(); onRequestSignUp?.(); } }} onChange={(event) => changeProfileUrl(publicLinkFromText(event.currentTarget.value))} />
             {profileUrl && <button type="button" className="agentlens-clear-input" aria-label="Clear creator profile URL" onClick={() => { changeProfileUrl(""); profileInputRef.current?.focus(); }}>×</button>}
-            <button type="submit" className="mod-cta" disabled={busy || !service || (signedIn && (!profileUrl.trim() || !operationAvailable(capabilities, "profile", service.clientVersion())))} aria-label="Fetch page" aria-busy={busy}>{busy ? "Parsing…" : signedIn ? "Parse" : "Try this link"}</button>
+            {parsingBlocked ? <button type="button" className="mod-cta agentlens-parse-manage-plan" disabled={busy} onClick={onManagePlan}>{t("entitlement.manage")}</button>
+              : <button type="submit" className="mod-cta" disabled={busy || !service || editable && !profileUrl.trim() || signedIn && !operationAvailable(capabilities, "profile", service.clientVersion())} aria-label="Fetch page" aria-busy={busy}>{busy ? "Parsing…" : editable ? "Parse" : "Try this link"}</button>}
             </div>
           {busy && !saving && !loadingMore && <p className="agentlens-parse-status" role="status">{rows.length ? "Loading or preparing posts…" : "Fetching posts…"} This can take a moment.</p>}
           {error && <p className="agentlens-inline-error" data-pinterest-guidance={isPinterestGuidance(error) || undefined} role="alert">{error}</p>}
+          {trial?.recoverProfile && service?.recoverTrialProfile && <button type="button" disabled={busy || saving} onClick={() => void recoverTrial()}>Open previous trial results</button>}
       </form>
       {rows.length > 0 ? (
             <div className={"agentlens-master-detail agentlens-bulk-results"}>
@@ -512,6 +584,7 @@ export function BulkFetchPane({
                   const key = contentKey(preview.post);
                   const checkboxId = `${selectionId}-${index}`;
                   const counts = mediaCounts(preview.post);
+                  if (listingOnlyPreviewPlatforms.has(preview.post.platform)) counts.videos = 1;
                   return (
                     <div key={key} className={`agentlens-bulk-post${session.current.isSelected(key) ? " is-selected" : ""}`}>
                       {!saving && <label className="agentlens-bulk-post-hit-area" htmlFor={checkboxId} aria-hidden="true" />}
@@ -538,7 +611,8 @@ export function BulkFetchPane({
 );
                 })}
                 </div>
-                {nextCursor && !rows.some(row => row.historyRestore) && <div className="agentlens-fetch-more"><button type="button" onClick={() => void loadMore()} disabled={busy} aria-label={retryPage ? "Retry failed page" : (signedIn ? "Fetch more · estimated 1 credit" : "Fetch more")}>{loadingMore ? "Fetching More…" : retryPage ? "Retry failed page" : "Fetch more"}</button></div>}
+                {nextCursor && !rows.some(row => row.historyRestore) && <div className="agentlens-fetch-more"><button type="button" onClick={() => void loadMore()} disabled={busy} aria-label={parsingBlocked ? t("entitlement.manage") : retryPage ? "Retry failed page" : (signedIn ? "Fetch more · estimated 1 credit" : "Fetch more")}>{parsingBlocked ? t("entitlement.manage") : loadingMore ? "Fetching More…" : retryPage ? "Retry failed page" : "Fetch more"}</button></div>}
+                {!nextCursor && !busy && !rows.some(row => row.historyRestore) && <p className="agentlens-bulk-loaded" role="status">{t("bulk.allPostsLoaded")}</p>}
                 <footer className="agentlens-single-footer agentlens-bulk-footer"><FolderField compact label="Destination folder" value={folderPath} onChange={path=>{if(saving)return;bulkDraftRevision.current+=1;setBusy(loadingMore);setFolderPath(path);setPrepared([]);setResult(null);}} /><button type="button" disabled={(busy && !saving) || cancelling} onClick={()=>{if(saving)cancelSave();else changeProfileUrl('');}}>Cancel</button><button type="button" className="mod-cta" aria-label="Review batch manifest" onClick={()=>{if(prepared.length)setSaveViewOpen(true);else void reviewBatch();}} disabled={!saving && (busy || session.current.selected().length===0)}>{saving ? "View progress" : result ? "View results" : "Save"}</button></footer>
               </section>
               {mobileDetailOpen && active && <WorkbenchDialog title="Preview" className="agentlens-post-preview-dialog" placement="right" closeIcon={previewClose} closeOnBackdrop onClose={()=>setMobileDetailOpen(false)}>
@@ -553,7 +627,7 @@ export function BulkFetchPane({
                 </section>
               </WorkbenchDialog>}
             </div>
-) : signedIn ? (
+) : editable ? (
         <section className="agentlens-preview-card is-empty"><EmptyStateIllustration /><h3>Paste a link to begin</h3><p>AgentLens parses the source first. Nothing is written<br />to your Vault until you confirm the save settings.</p></section>
 ) : <WorkflowOnboarding variant="bulk" onRequestSignUp={onStartFree ?? onRequestSignUp} />}
       <BackToTop />

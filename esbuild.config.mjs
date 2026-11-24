@@ -5,6 +5,9 @@ import { apiBaseFor } from "./scripts/api-targets.mjs";
 
 const production = process.argv[2] === "production";
 const apiBaseUrl = process.env.AGENTLENS_API_BASE_URL ?? apiBaseFor("production");
+const localApi = new URL(apiBaseUrl);
+const trialEnabled = process.env.AGENTLENS_ANONYMOUS_TRIAL === "1" && localApi.protocol === "http:"
+  && localApi.hostname === "127.0.0.1";
 const releaseProfile = process.env.AGENTLENS_RELEASE_PROFILE ?? "single-fetch-review";
 const context = await esbuild.context({
   entryPoints: ["src/main.ts"],
@@ -43,6 +46,7 @@ const context = await esbuild.context({
   outfile: "main.js",
   jsx: "automatic",
   define: {
+    "process.env.AGENTLENS_ANONYMOUS_TRIAL": JSON.stringify(trialEnabled ? "1" : "0"),
     "process.env.AGENTLENS_RELEASE_PROFILE": JSON.stringify(releaseProfile),
     "process.env.NODE_ENV": JSON.stringify(production ? "production" : "development"),
     "process.env.AGENTLENS_API_BASE_URL": JSON.stringify(apiBaseUrl)
